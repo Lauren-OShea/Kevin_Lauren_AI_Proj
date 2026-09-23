@@ -6,6 +6,7 @@
 #include "jack.h"
 #include "shard.h"
 #include "enemy.h"
+#include "platform.h"
 
 #define SCREEN_WIDTH  800
 #define SCREEN_HEIGHT 500
@@ -14,12 +15,13 @@
 #define TARGET_FPS    60
 
 typedef struct Game {
-    Jack  jack;
-    Shard shards[MAX_SHARDS];
-    Enemy enemies[MAX_ENEMIES];
-    int   score;
-    bool  active;
-    float frameCounter;
+    Jack     jack;
+    Shard    shards[MAX_SHARDS];
+    Enemy    enemies[MAX_ENEMIES];
+    Platform platforms[MAX_PLATFORMS];
+    int      score;
+    bool     active;
+    float    frameCounter;
 } Game;
 
 void Game_Init(Game *game);
