@@ -5,7 +5,7 @@
  *  Background asset
  * ============================================================ */
 
-static Texture2D g_backgroundTex = { 0 };
+static Texture2D g_backgroundTex    = { 0 };
 static bool      g_backgroundLoaded = false;
 
 static void LoadBackgroundAsset(void) {
@@ -125,11 +125,18 @@ static void BuildLevel(Game *game) {
  * ============================================================ */
 
 static void SpawnAllEnemies(Game *game) {
-    // Skip the ground floor (index 0) so enemies start on raised platforms.
-    // One enemy per platform from index 1 onward.
+    /* Skip ground floor (index 0). Each raised platform gets a random type. */
     for (int i = 1; i < MAX_PLATFORMS; i++) {
         if (!game->platforms[i].active) continue;
-        Enemy_SpawnOnPlatform(game->enemies, game->platforms[i].bounds);
+
+        /* ~40% chance of a shooter, 60% walker */
+        bool useShooter = (GetRandomValue(0, 99) < 40);
+
+        if (useShooter) {
+            Enemy_SpawnShooterOnPlatform(game->enemies, game->platforms[i].bounds);
+        } else {
+            Enemy_SpawnOnPlatform(game->enemies, game->platforms[i].bounds);
+        }
     }
 }
 
@@ -198,12 +205,31 @@ static void ResolveShardEnemyCollisions(Game *game) {
 
             Rectangle er = Enemy_GetRect(&game->enemies[j]);
             if (CheckCollisionCircleRec(game->shards[i].position, SHARD_RADIUS, er)) {
-                // Consume the shard; stun (do NOT kill) the enemy
                 game->shards[i].active = false;
-
                 if (Enemy_Stun(&game->enemies[j])) {
-                    game->score += 10;   // reward still given on stun
+                    game->score += 10;
                 }
+                break;
+            }
+        }
+    }
+}
+
+/* Shard vs enemy projectile — shards can shield the player */
+static void ResolveShardProjectileCollisions(Game *game) {
+    for (int i = 0; i < MAX_SHARDS; i++) {
+        if (!game->shards[i].active) continue;
+
+        for (int j = 0; j < MAX_ENEMY_PROJECTILES; j++) {
+            if (!game->enemyProjectiles[j].active) continue;
+
+            float dx = game->shards[i].position.x - game->enemyProjectiles[j].position.x;
+            float dy = game->shards[i].position.y - game->enemyProjectiles[j].position.y;
+            float rr = SHARD_RADIUS + ENEMY_PROJECTILE_RADIUS;
+
+            if (dx * dx + dy * dy < rr * rr) {
+                game->shards[i].active = false;
+                game->enemyProjectiles[j].active = false;
                 break;
             }
         }
@@ -218,6 +244,7 @@ void Game_Init(Game *game) {
     Jack_Init(&game->jack);
     Shard_InitAll(game->shards);
     Enemy_InitAll(game->enemies);
+    EnemyProjectile_InitAll(game->enemyProjectiles);
 
     BuildLevel(game);
     SpawnAllEnemies(game);
@@ -234,12 +261,15 @@ void Game_Restart(Game *game) {
 void Game_Update(Game *game) {
     if (!game->active) return;
 
+    /* Player */
     Jack_Update(&game->jack);
     ResolveJackPlatformCollisions(game);
 
+    /* Shards */
     Shard_UpdateAll(game->shards, SCREEN_WIDTH);
     ResolveShardPlatformCollisions(game);
 
+    /* Player rect (slightly forgiving) */
     Rectangle playerRect = {
         game->jack.position.x - JACK_RADIUS * 0.75f,
         game->jack.position.y - JACK_RADIUS * 0.75f,
@@ -247,13 +277,27 @@ void Game_Update(Game *game) {
         JACK_RADIUS * 1.5f
     };
 
-    if (Enemy_UpdateAll(game->enemies, playerRect)) {
+    /* Enemies (walkers + shooters) — may spawn projectiles */
+    if (Enemy_UpdateAll(game->enemies, game->jack.position,
+                        playerRect, game->enemyProjectiles)) {
         game->active = false;
         return;
     }
 
+    /* Enemy projectiles — hit the player? */
+    if (EnemyProjectile_UpdateAll(game->enemyProjectiles, playerRect,
+                                  SCREEN_WIDTH, SCREEN_HEIGHT)) {
+        game->active = false;
+        return;
+    }
+
+    /* Shard ↔ Enemy */
     ResolveShardEnemyCollisions(game);
 
+    /* Shard ↔ Projectile (deflect) */
+    ResolveShardProjectileCollisions(game);
+
+    /* Shooting */
     if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
         Shard_Shoot(game->shards, game->jack.position);
     }
@@ -263,6 +307,7 @@ void Game_Draw(const Game *game) {
     DrawBackground();
     Platform_DrawAll(game->platforms);
     Shard_DrawAll(game->shards);
+    EnemyProjectile_DrawAll(game->enemyProjectiles);
     Enemy_DrawAll(game->enemies);
     Jack_Draw(&game->jack);
     DrawHUD(game);

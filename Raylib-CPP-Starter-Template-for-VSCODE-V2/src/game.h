@@ -15,13 +15,14 @@
 #define TARGET_FPS    60
 
 typedef struct Game {
-    Jack     jack;
-    Shard    shards[MAX_SHARDS];
-    Enemy    enemies[MAX_ENEMIES];
-    Platform platforms[MAX_PLATFORMS];
-    int      score;
-    bool     active;
-    float    frameCounter;
+    Jack            jack;
+    Shard           shards[MAX_SHARDS];
+    Enemy           enemies[MAX_ENEMIES];
+    EnemyProjectile enemyProjectiles[MAX_ENEMY_PROJECTILES];
+    Platform        platforms[MAX_PLATFORMS];
+    int             score;
+    bool            active;
+    float           frameCounter;
 } Game;
 
 void Game_Init(Game *game);
