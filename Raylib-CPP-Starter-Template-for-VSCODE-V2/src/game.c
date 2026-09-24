@@ -144,36 +144,6 @@ static void SpawnAllEnemies(Game *game) {
  *  Collision helpers
  * ============================================================ */
 
-static void ResolveJackPlatformCollisions(Game *game) {
-    for (int i = 0; i < MAX_PLATFORMS; i++) {
-        if (!game->platforms[i].active) continue;
-
-        Rectangle p  = game->platforms[i].bounds;
-        Rectangle jr = {
-            game->jack.position.x - JACK_RADIUS,
-            game->jack.position.y - JACK_RADIUS,
-            JACK_RADIUS * 2,
-            JACK_RADIUS * 2
-        };
-
-        if (CheckCollisionRecs(jr, p)) {
-            float overlapTop    = (p.y + p.height) - jr.y;
-            float overlapBottom = (jr.y + jr.height) - p.y;
-            float overlapLeft   = (jr.x + jr.width)  - p.x;
-            float overlapRight  = (p.x + p.width)    - jr.x;
-
-            float minX = (overlapLeft < overlapRight) ? overlapLeft : -overlapRight;
-            float minY = (overlapTop  < overlapBottom) ? overlapTop  : -overlapBottom;
-
-            if (fabsf(minX) < fabsf(minY)) {
-                game->jack.position.x += minX;
-            } else {
-                game->jack.position.y += minY;
-            }
-        }
-    }
-}
-
 static void ResolveShardPlatformCollisions(Game *game) {
     for (int i = 0; i < MAX_SHARDS; i++) {
         if (!game->shards[i].active) continue;
@@ -263,7 +233,6 @@ void Game_Update(Game *game) {
 
     // 1. Player
     Jack_Update(&game->jack, game->platforms);
-    ResolveJackPlatformCollisions(game);
 
     /* Shards */
     Shard_UpdateAll(game->shards, SCREEN_WIDTH);
