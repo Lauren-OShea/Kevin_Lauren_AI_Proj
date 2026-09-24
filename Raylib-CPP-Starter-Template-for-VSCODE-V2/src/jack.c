@@ -2,7 +2,7 @@
 #include <math.h>
 
 void Jack_Init(Jack *jack) {
-    jack->position = (Vector2){ 130, GetScreenHeight() / 2.0f };
+    jack->position = (Vector2){ 130, 400 };
     jack->radiusX = 22.0f;
     jack->radiusY = 28.0f;
     jack->bobPhase = 0.0f;
@@ -66,7 +66,7 @@ if (jack->velocityY >= 0.0f) {
 
             // Only land if we were ABOVE the platform top last frame
             // and are now at/below it. This is what makes it one-way.
-            float top = p.y;
+
             if (beforeBottomMove <= p.y + 1.0f && Jack_Bottom(jack) >= p.y) {
                 jack->position.y = p.y - jack->radiusY;
                 jack->velocityY  = 0.0f;
