@@ -185,7 +185,7 @@ void Game_Update(Game *game) {
     if (!game->active) return;
 
     // 1. Player
-    Jack_Update(&game->jack);
+    Jack_Update(&game->jack, game->platforms);
     ResolveJackPlatformCollisions(game);
 
     // 2. Shards
