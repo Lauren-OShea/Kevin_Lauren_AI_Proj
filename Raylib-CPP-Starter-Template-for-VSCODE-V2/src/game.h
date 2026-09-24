@@ -8,14 +8,15 @@
 #include "enemy.h"
 #include "platform.h"
 
-#define SCREEN_WIDTH  800
-#define SCREEN_HEIGHT 500
-#define JACK_RADIUS   26.0f
-#define GAME_TITLE    "Jack Frost - Raylib"
-#define TARGET_FPS    60
+#define SCREEN_WIDTH   800
+#define SCREEN_HEIGHT  500
+#define JACK_RADIUS    26.0f
+#define GAME_TITLE     "Jack Frost - Raylib"
+#define TARGET_FPS     60
+#define PLAYER_COUNT   2
 
 typedef struct Game {
-    Jack            jack;
+    Jack            players[PLAYER_COUNT];
     Shard           shards[MAX_SHARDS];
     Enemy           enemies[MAX_ENEMIES];
     EnemyProjectile enemyProjectiles[MAX_ENEMY_PROJECTILES];

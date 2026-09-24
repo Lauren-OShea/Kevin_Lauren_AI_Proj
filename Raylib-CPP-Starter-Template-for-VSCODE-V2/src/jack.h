@@ -4,32 +4,35 @@
 #include "raylib.h"
 #include "platform.h"
 
+typedef struct JackControls {
+    int keyLeft;
+    int keyRight;
+    int keyJump;
+} JackControls;
+
 typedef struct Jack {
     Vector2 position;
-    float radiusX;
-    float radiusY;
-    float baseY;
-    float bobPhase;
-    float bobOffset;
+    float   radiusX;
+    float   radiusY;
+    float   baseY;
+    float   bobPhase;
+    float   bobOffset;
 
+    float   velocityY;
+    bool    isJumping;
+    float   moveSpeed;
+    float   jumpForce;
+    float   gravity;
+    float   facingDir;   /* +1 = right, -1 = left */
 
-    float velocityY;
-    bool isJumping;
-    float moveSpeed;
-    float jumpForce;
-    float gravity;
+    bool    onGround;
 
-    bool onGround;
-
+    Color   accentColor; /* used for crystals / glow */
 } Jack;
 
-// Initialize Jack to default state
-void Jack_Init(Jack *jack);
+void Jack_Init  (Jack *jack, Vector2 startPos, Color accentColor);
+void Jack_Update(Jack *jack, const Platform platforms[MAX_PLATFORMS],
+                 const JackControls *controls);
+void Jack_Draw  (const Jack *jack);
 
-// Update Jack's position (mouse follow + bob)
-void Jack_Update(Jack *jack, const Platform platforms[MAX_PLATFORMS]);
-
-// Draw Jack at his current position
-void Jack_Draw(const Jack *jack);
-
-#endif // JACK_H
+#endif /* JACK_H */

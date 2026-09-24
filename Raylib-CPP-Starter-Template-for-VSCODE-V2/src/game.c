@@ -85,6 +85,12 @@ static void DrawHUD(const Game *game) {
     DrawText(TextFormat("SCORE: %d", game->score),
              20, 20, 30, (Color){ 232, 245, 255, 255 });
 
+    DrawText("P1: A/D  SPACE  E",
+             20, SCREEN_HEIGHT - 30, 18, (Color){ 200, 220, 240, 200 });
+    DrawText("P2: ARROWS  UP  M",
+             SCREEN_WIDTH - 200, SCREEN_HEIGHT - 30, 18,
+             (Color){ 240, 200, 220, 200 });
+
     if (!game->active) {
         DrawRectangle(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT,
                       (Color){ 0, 0, 0, 150 });
@@ -120,16 +126,10 @@ static void BuildLevel(Game *game) {
     Platform_Add(game->platforms, (Rectangle){ 320, 120, 160, 24 });
 }
 
-/* ============================================================
- *  Enemy placement — all enemies spawn once at level start
- * ============================================================ */
-
 static void SpawnAllEnemies(Game *game) {
-    /* Skip ground floor (index 0). Each raised platform gets a random type. */
     for (int i = 1; i < MAX_PLATFORMS; i++) {
         if (!game->platforms[i].active) continue;
 
-        /* ~40% chance of a shooter, 60% walker */
         bool useShooter = (GetRandomValue(0, 99) < 40);
 
         if (useShooter) {
@@ -185,7 +185,6 @@ static void ResolveShardEnemyCollisions(Game *game) {
     }
 }
 
-/* Shard vs enemy projectile — shards can shield the player */
 static void ResolveShardProjectileCollisions(Game *game) {
     for (int i = 0; i < MAX_SHARDS; i++) {
         if (!game->shards[i].active) continue;
@@ -210,8 +209,16 @@ static void ResolveShardProjectileCollisions(Game *game) {
  *  Public API
  * ============================================================ */
 
+/* Player 1 = left side, cool blue. Player 2 = right side, warm pink. */
+static const JackControls P1_CONTROLS = { KEY_A, KEY_D, KEY_SPACE };
+static const JackControls P2_CONTROLS = { KEY_LEFT, KEY_RIGHT, KEY_UP };
+
 void Game_Init(Game *game) {
-    Jack_Init(&game->jack);
+    Jack_Init(&game->players[0], (Vector2){ 130, 400 },
+              (Color){ 120, 200, 255, 255 });
+    Jack_Init(&game->players[1], (Vector2){ 670, 400 },
+              (Color){ 255, 150, 200, 255 });
+
     Shard_InitAll(game->shards);
     Enemy_InitAll(game->enemies);
     EnemyProjectile_InitAll(game->enemyProjectiles);
@@ -231,44 +238,55 @@ void Game_Restart(Game *game) {
 void Game_Update(Game *game) {
     if (!game->active) return;
 
-    // 1. Player
-    Jack_Update(&game->jack, game->platforms);
+    /* 1. Players */
+    Jack_Update(&game->players[0], game->platforms, &P1_CONTROLS);
+    Jack_Update(&game->players[1], game->platforms, &P2_CONTROLS);
 
-    /* Shards */
+    /* 2. Shards */
     Shard_UpdateAll(game->shards, SCREEN_WIDTH);
     ResolveShardPlatformCollisions(game);
 
-    /* Player rect (slightly forgiving) */
-    Rectangle playerRect = {
-        game->jack.position.x - JACK_RADIUS * 0.75f,
-        game->jack.position.y - JACK_RADIUS * 0.75f,
-        JACK_RADIUS * 1.5f,
-        JACK_RADIUS * 1.5f
-    };
+    /* 3. Build player data arrays for enemies */
+    Vector2   playerPositions[PLAYER_COUNT];
+    Rectangle playerHitboxes [PLAYER_COUNT];
+    for (int p = 0; p < PLAYER_COUNT; p++) {
+        playerPositions[p] = game->players[p].position;
+        playerHitboxes[p]  = (Rectangle){
+            game->players[p].position.x - JACK_RADIUS * 0.75f,
+            game->players[p].position.y - JACK_RADIUS * 0.75f,
+            JACK_RADIUS * 1.5f,
+            JACK_RADIUS * 1.5f
+        };
+    }
 
-    /* Enemies (walkers + shooters) — may spawn projectiles */
-    if (Enemy_UpdateAll(game->enemies, game->jack.position,
-                        playerRect, game->enemyProjectiles)) {
+    /* 4. Enemies — hurt ANY player → game over */
+    if (Enemy_UpdateAll(game->enemies, playerPositions, playerHitboxes,
+                        PLAYER_COUNT, game->enemyProjectiles)) {
         game->active = false;
         return;
     }
 
-    /* Enemy projectiles — hit the player? */
-    if (EnemyProjectile_UpdateAll(game->enemyProjectiles, playerRect,
-                                  SCREEN_WIDTH, SCREEN_HEIGHT)) {
+    /* 5. Enemy projectiles */
+    if (EnemyProjectile_UpdateAll(game->enemyProjectiles, playerHitboxes,
+                                  PLAYER_COUNT, SCREEN_WIDTH, SCREEN_HEIGHT)) {
         game->active = false;
         return;
     }
 
-    /* Shard ↔ Enemy */
+    /* 6. Shard ↔ Enemy */
     ResolveShardEnemyCollisions(game);
 
-    /* Shard ↔ Projectile (deflect) */
+    /* 7. Shard ↔ Projectile (deflect) */
     ResolveShardProjectileCollisions(game);
 
-    /* Shooting */
-    if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
-        Shard_Shoot(game->shards, game->jack.position);
+    /* 8. Shooting — shards never hit players, only enemies + platforms */
+    if (IsKeyPressed(KEY_E)) {
+        Shard_Shoot(game->shards, game->players[0].position,
+                    game->players[0].facingDir);
+    }
+    if (IsKeyPressed(KEY_M)) {
+        Shard_Shoot(game->shards, game->players[1].position,
+                    game->players[1].facingDir);
     }
 }
 
@@ -278,7 +296,8 @@ void Game_Draw(const Game *game) {
     Shard_DrawAll(game->shards);
     EnemyProjectile_DrawAll(game->enemyProjectiles);
     Enemy_DrawAll(game->enemies);
-    Jack_Draw(&game->jack);
+    Jack_Draw(&game->players[0]);
+    Jack_Draw(&game->players[1]);
     DrawHUD(game);
 }
 

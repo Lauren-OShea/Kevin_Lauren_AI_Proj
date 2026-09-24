@@ -6,9 +6,7 @@
  * ============================================================ */
 
 void Enemy_InitAll(Enemy enemies[MAX_ENEMIES]) {
-    for (int i = 0; i < MAX_ENEMIES; i++) {
-        enemies[i].active = false;
-    }
+    for (int i = 0; i < MAX_ENEMIES; i++) enemies[i].active = false;
 }
 
 Rectangle Enemy_GetRect(const Enemy *enemy) {
@@ -72,7 +70,6 @@ bool Enemy_SpawnShooterOnPlatform(Enemy enemies[MAX_ENEMIES], Rectangle platform
  *  Enemy — update
  * ============================================================ */
 
-/* Fire a projectile travelling purely horizontally in `dir`. */
 static void Enemy_FireProjectile(EnemyProjectile projectiles[MAX_ENEMY_PROJECTILES],
                                  Vector2 origin, float dir)
 {
@@ -86,8 +83,23 @@ static void Enemy_FireProjectile(EnemyProjectile projectiles[MAX_ENEMY_PROJECTIL
     }
 }
 
+/* Pick the closest player index — used by shooters for targeting */
+static int NearestPlayerIndex(Vector2 from, Vector2 players[], int count) {
+    int best = 0;
+    float bestD2 = 1e9f;
+    for (int i = 0; i < count; i++) {
+        float dx = players[i].x - from.x;
+        float dy = players[i].y - from.y;
+        float d2 = dx * dx + dy * dy;
+        if (d2 < bestD2) { bestD2 = d2; best = i; }
+    }
+    return best;
+}
+
 bool Enemy_UpdateAll(Enemy enemies[MAX_ENEMIES],
-                     Vector2 playerPos, Rectangle playerRect,
+                     Vector2 playerPositions[],
+                     Rectangle playerHitboxes[],
+                     int playerCount,
                      EnemyProjectile projectiles[MAX_ENEMY_PROJECTILES])
 {
     bool  hit = false;
@@ -114,15 +126,18 @@ bool Enemy_UpdateAll(Enemy enemies[MAX_ENEMIES],
                 enemies[i].dir = -1.0f;
             }
 
-            /* Shooter behaviour (unchanged) */
+            /* Shooter behaviour — target the nearest player */
             if (enemies[i].type == ENEMY_SHOOTER) {
                 if (enemies[i].shootCooldown > 0.0f) {
                     enemies[i].shootCooldown -= dt;
                     if (enemies[i].shootCooldown < 0.0f) enemies[i].shootCooldown = 0.0f;
                 }
 
-                float dx = playerPos.x - enemies[i].position.x;
-                float dy = playerPos.y - enemies[i].position.y;
+                int nearest = NearestPlayerIndex(enemies[i].position,
+                                                 playerPositions, playerCount);
+
+                float dx = playerPositions[nearest].x - enemies[i].position.x;
+                float dy = playerPositions[nearest].y - enemies[i].position.y;
 
                 bool facingPlayer      = (dx > 0.0f && enemies[i].dir > 0.0f) ||
                                          (dx < 0.0f && enemies[i].dir < 0.0f);
@@ -141,12 +156,14 @@ bool Enemy_UpdateAll(Enemy enemies[MAX_ENEMIES],
                 }
             }
 
-            /* Only ACTIVE (non-stunned) enemies hurt the player */
-            if (CheckCollisionRecs(Enemy_GetRect(&enemies[i]), playerRect)) {
-                hit = true;
+            /* Only active (non-stunned) enemies hurt players */
+            for (int p = 0; p < playerCount; p++) {
+                if (CheckCollisionRecs(Enemy_GetRect(&enemies[i]),
+                                       playerHitboxes[p])) {
+                    hit = true;
+                }
             }
         }
-        /* Stunned enemies: harmless — player can walk right past them */
     }
 
     return hit;
@@ -187,7 +204,6 @@ void Enemy_DrawAll(const Enemy enemies[MAX_ENEMIES]) {
             light = (Color){ 200, 220, 255, 255 };
         }
 
-        /* Stun aura */
         if (stunned) {
             float pulse = 0.6f + 0.4f * sinf((float)GetTime() * 12.0f);
             DrawCircleLines((int)x, (int)(baseY - 22), 22,
@@ -197,27 +213,21 @@ void Enemy_DrawAll(const Enemy enemies[MAX_ENEMIES]) {
             DrawCircle((int)x,        (int)(baseY - 45), 2, (Color){ 220, 240, 255, 220 });
         }
 
-        /* Shadow */
         DrawEllipse((int)x, (int)(baseY + 1), 14, 4, (Color){ 0, 0, 0, 90 });
 
-        /* Tail */
         DrawCircle((int)(x - facing * 15), (int)(baseY - 18 + bob), 3, dark);
         DrawCircle((int)(x - facing * 18), (int)(baseY - 24 + bob), 2, dark);
 
-        /* Legs */
         DrawRectangle((int)(x - 8), (int)(baseY - 8), 5, (int)(8 + swing), dark);
         DrawRectangle((int)(x + 3), (int)(baseY - 8), 5, (int)(8 - swing), dark);
 
-        /* Body */
         float bodyCY = baseY - 22 + bob;
         DrawEllipse((int)x, (int)bodyCY, 14, 14, body);
         DrawEllipseLines((int)x, (int)bodyCY, 14, 14, dark);
         DrawEllipse((int)(x + facing * 3), (int)(bodyCY + 3), 9, 8, light);
 
-        /* Left arm */
         DrawCircle((int)(x - 13), (int)(bodyCY + 2), 4, dark);
 
-        /* Right arm — extended cannon for shooters */
         if (shooter && !stunned) {
             DrawRectangle((int)(x + facing * 13 - 4),
                           (int)(bodyCY - 1), 8, 6, dark);
@@ -234,7 +244,6 @@ void Enemy_DrawAll(const Enemy enemies[MAX_ENEMIES]) {
             DrawCircle((int)(x + 13), (int)(bodyCY + 2), 4, dark);
         }
 
-        /* Shooter crest */
         if (shooter && !stunned) {
             DrawTriangle(
                 (Vector2){ x - 5, bodyCY - 13 },
@@ -244,7 +253,6 @@ void Enemy_DrawAll(const Enemy enemies[MAX_ENEMIES]) {
             );
         }
 
-        /* Eyes */
         float eyeX = facing * 3.0f;
         DrawCircle((int)(x - 4 + eyeX), (int)(bodyCY - 3), 3, eye);
         DrawCircle((int)(x + 5 + eyeX), (int)(bodyCY - 3), 3, eye);
@@ -258,13 +266,12 @@ void Enemy_DrawAll(const Enemy enemies[MAX_ENEMIES]) {
  * ============================================================ */
 
 void EnemyProjectile_InitAll(EnemyProjectile projectiles[MAX_ENEMY_PROJECTILES]) {
-    for (int i = 0; i < MAX_ENEMY_PROJECTILES; i++) {
-        projectiles[i].active = false;
-    }
+    for (int i = 0; i < MAX_ENEMY_PROJECTILES; i++) projectiles[i].active = false;
 }
 
 bool EnemyProjectile_UpdateAll(EnemyProjectile projectiles[MAX_ENEMY_PROJECTILES],
-                               Rectangle playerRect,
+                               Rectangle playerHitboxes[],
+                               int playerCount,
                                int screenWidth, int screenHeight)
 {
     bool hit = false;
@@ -284,11 +291,15 @@ bool EnemyProjectile_UpdateAll(EnemyProjectile projectiles[MAX_ENEMY_PROJECTILES
             continue;
         }
 
-        if (CheckCollisionCircleRec(projectiles[i].position,
-                                    ENEMY_PROJECTILE_RADIUS, playerRect))
-        {
-            hit = true;
-            projectiles[i].active = false;
+        for (int p = 0; p < playerCount; p++) {
+            if (CheckCollisionCircleRec(projectiles[i].position,
+                                        ENEMY_PROJECTILE_RADIUS,
+                                        playerHitboxes[p]))
+            {
+                hit = true;
+                projectiles[i].active = false;
+                break;
+            }
         }
     }
 
