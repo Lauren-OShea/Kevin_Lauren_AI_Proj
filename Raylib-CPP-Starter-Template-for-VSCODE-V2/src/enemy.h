@@ -1,30 +1,37 @@
-#ifndef ENEMY_H
-#define ENEMY_H
+#ifndef JACKFROST_ENEMY_H
+#define JACKFROST_ENEMY_H
 
-#include "raylib.h"
 #include <stdbool.h>
+#include "raylib.h"
 
-#define MAX_ENEMIES 64
-#define ENEMY_BASE_SPEED 2.5f
-#define ENEMY_RADIUS 28.0f
+#define MAX_ENEMIES      32
+#define ENEMY_WIDTH      32
+#define ENEMY_HEIGHT     36
+#define ENEMY_SPEED      1.5f
+#define ENEMY_STUN_TIME  6.5f
 
 typedef struct Enemy {
-    Vector2 position;
-    float speed;
-    float phase;
-    bool active;
+    Vector2 position;      // feet position (bottom-center)
+    float   speed;
+    float   dir;           // +1 = right, -1 = left
+    float   patrolLeft;    // left patrol bound (world x)
+    float   patrolRight;   // right patrol bound (world x)
+    float   phase;         // walk animation phase
+    float   stunTimer;     // seconds remaining stunned (0 = not stunned)
+    bool    active;
 } Enemy;
 
-// Initialize all enemies to inactive
 void Enemy_InitAll(Enemy enemies[MAX_ENEMIES]);
 
-// Spawn a single enemy on the right side
-void Enemy_Spawn(Enemy enemies[MAX_ENEMIES], int screenWidth, int screenHeight);
+bool Enemy_SpawnOnPlatform(Enemy enemies[MAX_ENEMIES], Rectangle platform);
 
-// Update all active enemies; returns true if any enemy hits the player
-bool Enemy_UpdateAll(Enemy enemies[MAX_ENEMIES], Vector2 playerPos, float playerRadius);
+bool Enemy_UpdateAll(Enemy enemies[MAX_ENEMIES], Rectangle playerRect);
 
-// Draw all active enemies
 void Enemy_DrawAll(const Enemy enemies[MAX_ENEMIES]);
 
-#endif // ENEMY_H
+Rectangle Enemy_GetRect(const Enemy *enemy);
+
+// Returns true if the enemy was successfully stunned (was not already stunned).
+bool Enemy_Stun(Enemy *enemy);
+
+#endif // JACKFROST_ENEMY_H

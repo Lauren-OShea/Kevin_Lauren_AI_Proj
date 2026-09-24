@@ -2,24 +2,84 @@
 #include <math.h>
 
 /* ============================================================
- *  Internal drawing helpers
+ *  Background asset
  * ============================================================ */
 
-static void DrawBackground(void) {
-    DrawRectangleGradientV(
-        0, 0, SCREEN_WIDTH, SCREEN_HEIGHT,
-        (Color){ 194, 226, 255, 255 },
-        (Color){  77, 126, 168, 255 }
-    );
+static Texture2D g_backgroundTex = { 0 };
+static bool      g_backgroundLoaded = false;
 
-    // Static snowflakes
-    for (int i = 0; i < 70; i++) {
-        int   x = (i * 37) % SCREEN_WIDTH;
-        int   y = (i * 53) % SCREEN_HEIGHT;
-        float r = 1.5f + (i % 3);
-        DrawCircle(x, y, r, (Color){ 255, 255, 255, 180 });
+static void LoadBackgroundAsset(void) {
+    if (g_backgroundLoaded) return;
+
+    g_backgroundTex = LoadTexture("assets/background.png");
+
+    if (g_backgroundTex.id == 0) {
+        Image img = GenImageColor(SCREEN_WIDTH, SCREEN_HEIGHT, MAGENTA);
+        g_backgroundTex = LoadTextureFromImage(img);
+        UnloadImage(img);
+    }
+
+    g_backgroundLoaded = true;
+}
+
+static void UnloadBackgroundAsset(void) {
+    if (g_backgroundLoaded && g_backgroundTex.id != 0) {
+        UnloadTexture(g_backgroundTex);
+        g_backgroundTex.id = 0;
+        g_backgroundLoaded = false;
     }
 }
+
+/* ============================================================
+ *  Animated overlay
+ * ============================================================ */
+
+static void DrawAnimatedOverlay(void) {
+    float t = (float)GetTime();
+
+    for (int i = 0; i < 90; i++) {
+        int   x     = (i * 137) % SCREEN_WIDTH;
+        int   y     = (i * 79)  % (SCREEN_HEIGHT / 2);
+        float phase = (float)(i * 13);
+        float tw    = 0.5f + 0.5f * sinf(t * 2.0f + phase);
+
+        int alpha = 80 + (int)(tw * 175);
+        float r   = 0.8f + (i % 3) * 0.5f;
+
+        DrawCircle(x, y, r, (Color){ 255, 255, 255, (unsigned char)alpha });
+    }
+
+    for (int i = 0; i < 40; i++) {
+        float sx = (float)((i * 97)  % SCREEN_WIDTH);
+        float sy = fmodf((float)(i * 53) + t * 18.0f, (float)SCREEN_HEIGHT);
+        DrawCircle(sx, sy, 1.2f, (Color){ 255, 255, 255, 100 });
+    }
+
+    for (int i = 0; i < 25; i++) {
+        float sx = (float)((i * 173) % SCREEN_WIDTH);
+        float sy = fmodf((float)(i * 91) + t * 42.0f, (float)SCREEN_HEIGHT);
+        DrawCircle(sx, sy, 2.2f, (Color){ 255, 255, 255, 190 });
+    }
+
+    DrawRectangleGradientV(0, 0, SCREEN_WIDTH, 90,
+                           (Color){ 0, 0, 0, 80 }, (Color){ 0, 0, 0, 0 });
+    DrawRectangleGradientV(0, SCREEN_HEIGHT - 120, SCREEN_WIDTH, 120,
+                           (Color){ 0, 0, 0, 0 }, (Color){ 0, 0, 0, 120 });
+}
+
+static void DrawBackground(void) {
+    Rectangle src = { 0, 0,
+                      (float)g_backgroundTex.width,
+                      (float)g_backgroundTex.height };
+    Rectangle dst = { 0, 0, (float)SCREEN_WIDTH, (float)SCREEN_HEIGHT };
+
+    DrawTexturePro(g_backgroundTex, src, dst, (Vector2){ 0, 0 }, 0.0f, WHITE);
+    DrawAnimatedOverlay();
+}
+
+/* ============================================================
+ *  HUD
+ * ============================================================ */
 
 static void DrawHUD(const Game *game) {
     DrawText(TextFormat("SCORE: %d", game->score),
@@ -51,26 +111,30 @@ static void DrawHUD(const Game *game) {
 static void BuildLevel(Game *game) {
     Platform_InitAll(game->platforms);
 
-    // --- Ground floor (spans bottom, leaving a small gutter) ---
     Platform_Add(game->platforms, (Rectangle){   0, 440, 800, 40 });
-
-    // --- Mid-low ledges ---
     Platform_Add(game->platforms, (Rectangle){  80, 360, 200, 24 });
     Platform_Add(game->platforms, (Rectangle){ 520, 360, 200, 24 });
-
-    // --- Mid-high ledges ---
     Platform_Add(game->platforms, (Rectangle){ 300, 280, 200, 24 });
-
-    // --- Upper ledges ---
     Platform_Add(game->platforms, (Rectangle){  40, 200, 160, 24 });
     Platform_Add(game->platforms, (Rectangle){ 600, 200, 160, 24 });
-
-    // --- Top shelf ---
     Platform_Add(game->platforms, (Rectangle){ 320, 120, 160, 24 });
 }
 
 /* ============================================================
- *  Internal update helpers
+ *  Enemy placement — all enemies spawn once at level start
+ * ============================================================ */
+
+static void SpawnAllEnemies(Game *game) {
+    // Skip the ground floor (index 0) so enemies start on raised platforms.
+    // One enemy per platform from index 1 onward.
+    for (int i = 1; i < MAX_PLATFORMS; i++) {
+        if (!game->platforms[i].active) continue;
+        Enemy_SpawnOnPlatform(game->enemies, game->platforms[i].bounds);
+    }
+}
+
+/* ============================================================
+ *  Collision helpers
  * ============================================================ */
 
 static void ResolveJackPlatformCollisions(Game *game) {
@@ -86,11 +150,10 @@ static void ResolveJackPlatformCollisions(Game *game) {
         };
 
         if (CheckCollisionRecs(jr, p)) {
-            // Push out along the shortest axis
-            float overlapTop    = (p.y + p.height) - jr.y;             // push down
-            float overlapBottom = (jr.y + jr.height) - p.y;            // push up
-            float overlapLeft   = (jr.x + jr.width)  - p.x;            // push right
-            float overlapRight  = (p.x + p.width)    - jr.x;           // push left
+            float overlapTop    = (p.y + p.height) - jr.y;
+            float overlapBottom = (jr.y + jr.height) - p.y;
+            float overlapLeft   = (jr.x + jr.width)  - p.x;
+            float overlapRight  = (p.x + p.width)    - jr.x;
 
             float minX = (overlapLeft < overlapRight) ? overlapLeft : -overlapRight;
             float minY = (overlapTop  < overlapBottom) ? overlapTop  : -overlapBottom;
@@ -133,30 +196,16 @@ static void ResolveShardEnemyCollisions(Game *game) {
         for (int j = 0; j < MAX_ENEMIES; j++) {
             if (!game->enemies[j].active) continue;
 
-            float dx = game->shards[i].position.x - game->enemies[j].position.x;
-            float dy = game->shards[i].position.y - game->enemies[j].position.y;
+            Rectangle er = Enemy_GetRect(&game->enemies[j]);
+            if (CheckCollisionCircleRec(game->shards[i].position, SHARD_RADIUS, er)) {
+                // Consume the shard; stun (do NOT kill) the enemy
+                game->shards[i].active = false;
 
-            if (sqrtf(dx * dx + dy * dy) < SHARD_RADIUS + ENEMY_RADIUS) {
-                game->enemies[j].active = false;
-                game->shards[i].active  = false;
-                game->score += 10;
+                if (Enemy_Stun(&game->enemies[j])) {
+                    game->score += 10;   // reward still given on stun
+                }
                 break;
             }
-        }
-    }
-}
-
-static void HandleSpawning(Game *game) {
-    game->frameCounter += GetFrameTime() * 60.0f;
-
-    int rate = 46 - (game->score / 70);
-    if (rate < 22) rate = 22;
-
-    if ((int)game->frameCounter % rate == 0) {
-        Enemy_Spawn(game->enemies, SCREEN_WIDTH, SCREEN_HEIGHT);
-
-        if (game->score > 180 && GetRandomValue(0, 100) < 35) {
-            Enemy_Spawn(game->enemies, SCREEN_WIDTH, SCREEN_HEIGHT);
         }
     }
 }
@@ -171,6 +220,7 @@ void Game_Init(Game *game) {
     Enemy_InitAll(game->enemies);
 
     BuildLevel(game);
+    SpawnAllEnemies(game);
 
     game->score        = 0;
     game->active       = true;
@@ -188,23 +238,23 @@ void Game_Update(Game *game) {
     Jack_Update(&game->jack, game->platforms);
     ResolveJackPlatformCollisions(game);
 
-    // 2. Shards
     Shard_UpdateAll(game->shards, SCREEN_WIDTH);
     ResolveShardPlatformCollisions(game);
 
-    // 3. Enemies + collision with player
-    if (Enemy_UpdateAll(game->enemies, game->jack.position, JACK_RADIUS)) {
+    Rectangle playerRect = {
+        game->jack.position.x - JACK_RADIUS * 0.75f,
+        game->jack.position.y - JACK_RADIUS * 0.75f,
+        JACK_RADIUS * 1.5f,
+        JACK_RADIUS * 1.5f
+    };
+
+    if (Enemy_UpdateAll(game->enemies, playerRect)) {
         game->active = false;
         return;
     }
 
-    // 4. Shard vs Enemy collisions
     ResolveShardEnemyCollisions(game);
 
-    // 5. Spawning
-    HandleSpawning(game);
-
-    // 6. Shooting
     if (IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
         Shard_Shoot(game->shards, game->jack.position);
     }
@@ -220,12 +270,14 @@ void Game_Draw(const Game *game) {
 }
 
 /* ============================================================
- *  The entire application lifecycle lives here
+ *  Application lifecycle
  * ============================================================ */
 
 void Game_Run(Game *game) {
     InitWindow(SCREEN_WIDTH, SCREEN_HEIGHT, GAME_TITLE);
     SetTargetFPS(TARGET_FPS);
+
+    LoadBackgroundAsset();
     Game_Init(game);
 
     while (!WindowShouldClose()) {
@@ -241,5 +293,6 @@ void Game_Run(Game *game) {
         EndDrawing();
     }
 
+    UnloadBackgroundAsset();
     CloseWindow();
 }
