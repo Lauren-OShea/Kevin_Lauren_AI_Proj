@@ -4,11 +4,11 @@
 #include "raylib.h"
 #include "platform.h"
 
-#define JACK_ANIM_COUNT       7
-#define SPRITE_SCALE          1.5f
-#define JACK_DOWN_DURATION    1.0f
-#define JACK_FEET_OFFSET      12.0f
-#define JACK_POST_GETUP_INVULN 2.0f   /* seconds of blinking after recovery */
+#define JACK_ANIM_COUNT     4
+#define SPRITE_SCALE        1.5f
+#define JACK_FEET_OFFSET    12.0f
+#define JACK_MAX_LIVES      3
+#define JACK_INVULN_TIME    2.0f
 
 typedef struct JackControls {
     int keyLeft;
@@ -20,18 +20,13 @@ typedef enum JackAnim {
     JACK_ANIM_IDLE = 0,
     JACK_ANIM_WALK,
     JACK_ANIM_JUMP,
-    JACK_ANIM_SHOOT,
-    JACK_ANIM_KNOCKED_DOWN,
-    JACK_ANIM_DOWN,
-    JACK_ANIM_GET_UP
+    JACK_ANIM_SHOOT
 } JackAnim;
 
 typedef enum JackState {
-    JACK_STATE_NORMAL = 0,
-    JACK_STATE_SHOOTING,
-    JACK_STATE_KNOCKED_DOWN,
-    JACK_STATE_DOWN,
-    JACK_STATE_GETTING_UP
+    JACK_STATE_ALIVE = 0,
+    JACK_STATE_FLUNG,   /* lost last life — flying off screen */
+    JACK_STATE_GONE     /* off screen, out of the game */
 } JackState;
 
 typedef struct PlayerSprites {
@@ -46,6 +41,7 @@ typedef struct Jack {
     float   radiusX;
     float   radiusY;
 
+    float   velocityX;   /* only used during FLUNG */
     float   velocityY;
     float   moveSpeed;
     float   jumpForce;
@@ -56,8 +52,9 @@ typedef struct Jack {
     JackState state;
     JackAnim  currentAnim;
     float     animTimer;
-    float     stateTimer;
-    float     invulnTimer;      /* NEW — post-getup grace period */
+    float     shootTimer;
+    float     invulnTimer;
+    int       lives;
 
     Color     tintColor;
     float     feetOffsetY;
@@ -72,8 +69,9 @@ void Jack_Update(Jack *jack, const Platform platforms[MAX_PLATFORMS],
 void Jack_Draw  (const Jack *jack, const PlayerSprites *sprites);
 
 void Jack_TriggerShoot(Jack *jack);
-void Jack_Knockdown   (Jack *jack);
-bool Jack_IsVulnerable   (const Jack *jack);   /* can enemies hurt them? */
-bool Jack_IsInvulnerable (const Jack *jack);   /* should we blink them?  */
+void Jack_Hit         (Jack *jack);
+bool Jack_IsPlayable  (const Jack *jack);   /* alive → can move/shoot */
+bool Jack_IsVulnerable(const Jack *jack);   /* enemies can hurt them  */
+bool Jack_IsInvulnerable(const Jack *jack); /* should blink           */
 
 #endif /* JACK_H */

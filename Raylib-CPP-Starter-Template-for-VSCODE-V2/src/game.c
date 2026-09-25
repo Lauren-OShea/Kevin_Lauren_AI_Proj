@@ -69,9 +69,30 @@ static void DrawBackground(const Game *game) {
  *  HUD
  * ============================================================ */
 
+static void DrawLivesRow(int lives, int xStart, int y, Color full) {
+    for (int i = 0; i < JACK_MAX_LIVES; i++) {
+        int cx = xStart + i * 26;
+
+        Color face = (i < lives)
+                     ? full
+                     : (Color){ 60, 40, 40, 255 };
+
+        DrawCircle(cx, y, 9, face);
+        DrawCircleLines(cx, y, 9, (Color){ 20, 15, 15, 255 });
+    }
+}
+
 static void DrawHUD(const Game *game) {
     DrawText(TextFormat("SCORE: %d", game->score),
              20, 20, 30, (Color){ 232, 245, 255, 255 });
+
+    /* Lives — P1 top-left, P2 top-right */
+    DrawLivesRow(game->players[0].lives, 30, 70,
+                 (Color){ 120, 200, 255, 255 });
+
+    int p2StartX = SCREEN_WIDTH - 30 - (JACK_MAX_LIVES - 1) * 26;
+    DrawLivesRow(game->players[1].lives, p2StartX, 70,
+                 (Color){ 255, 110, 110, 255 });
 
     DrawText("P1: A/D  SPACE  E",
              20, SCREEN_HEIGHT - 30, 18, (Color){ 200, 220, 240, 200 });
@@ -194,8 +215,7 @@ static void ResolveShardProjectileCollisions(Game *game) {
 }
 
 /* ============================================================
- *  Player-vs-threat collision (handled here so enemy.c stays
- *  unchanged and unaware of player invulnerability)
+ *  Player-vs-threat collision
  * ============================================================ */
 
 static void ApplyPlayerThreatCollisions(Game *game,
@@ -208,8 +228,8 @@ static void ApplyPlayerThreatCollisions(Game *game,
 
         /* vs. enemies — stunned enemies cannot hurt the player */
         for (int i = 0; i < MAX_ENEMIES && !hit; i++) {
-            if (!game->enemies[i].active) continue;
-            if ( game->enemies[i].stunTimer > 0.0f) continue;   /* NEW */
+            if (!game->enemies[i].active)           continue;
+            if ( game->enemies[i].stunTimer > 0.0f) continue;
             if (CheckCollisionRecs(Enemy_GetRect(&game->enemies[i]),
                                    playerHitboxes[p])) {
                 hit = true;
@@ -227,7 +247,7 @@ static void ApplyPlayerThreatCollisions(Game *game,
             }
         }
 
-        if (hit) Jack_Knockdown(&game->players[p]);
+        if (hit) Jack_Hit(&game->players[p]);
     }
 }
 
@@ -239,11 +259,9 @@ static const JackControls P1_CONTROLS = { KEY_A, KEY_D, KEY_SPACE };
 static const JackControls P2_CONTROLS = { KEY_LEFT, KEY_RIGHT, KEY_UP };
 
 void Game_Init(Game *game) {
-    Jack_Init(&game->players[0], (Vector2){ 130, 400 },
-              WHITE);                                            /* P1 – no tint    */
-
+    Jack_Init(&game->players[0], (Vector2){ 130, 400 }, WHITE);
     Jack_Init(&game->players[1], (Vector2){ 670, 400 },
-              (Color){ 255, 110, 110, 255 });                    /* P2 – red tint   */
+              (Color){ 255, 110, 110, 255 });
 
     Shard_InitAll(game->shards);
     Enemy_InitAll(game->enemies);
@@ -272,7 +290,7 @@ void Game_Update(Game *game) {
     Shard_UpdateAll(game->shards, SCREEN_WIDTH);
     ResolveShardPlatformCollisions(game);
 
-    /* 3. Build player data */
+    /* 3. Player data arrays */
     Vector2   playerPositions[PLAYER_COUNT];
     Rectangle playerHitboxes [PLAYER_COUNT];
     for (int p = 0; p < PLAYER_COUNT; p++) {
@@ -285,9 +303,7 @@ void Game_Update(Game *game) {
         };
     }
 
-    /* 4. Enemies move & shoot.
-     *    We pass NULL hitboxes so enemy.c does not internally
-     *    flag player hits — game.c handles that below. */
+    /* 4. Enemies move & shoot (null hitboxes; game.c handles hits) */
     Rectangle nullHitboxes[PLAYER_COUNT];
     for (int p = 0; p < PLAYER_COUNT; p++) {
         nullHitboxes[p] = (Rectangle){ -10000, -10000, 0, 0 };
@@ -295,13 +311,18 @@ void Game_Update(Game *game) {
     Enemy_UpdateAll(game->enemies, playerPositions, nullHitboxes,
                     PLAYER_COUNT, game->enemyProjectiles);
 
-    /* 5. Projectiles move — again pass NULL hitboxes so they
-     *    don't self-destruct on collision; we handle that below. */
     EnemyProjectile_UpdateAll(game->enemyProjectiles, nullHitboxes,
                               PLAYER_COUNT, SCREEN_WIDTH, SCREEN_HEIGHT);
 
-    /* 6. Apply player-vs-threat collisions (knockdown logic) */
+    /* 5. Player-vs-threat (lives loss + fling) */
     ApplyPlayerThreatCollisions(game, playerHitboxes);
+
+    /* 6. Both players eliminated? End the level. */
+    if (game->players[0].state == JACK_STATE_GONE &&
+        game->players[1].state == JACK_STATE_GONE) {
+        game->active = false;
+        return;
+    }
 
     /* 7. Shard ↔ Enemy */
     ResolveShardEnemyCollisions(game);
@@ -309,13 +330,13 @@ void Game_Update(Game *game) {
     /* 8. Shard ↔ Enemy projectile (deflect) */
     ResolveShardProjectileCollisions(game);
 
-    /* 9. Shooting */
-    if (IsKeyPressed(KEY_E)) {
+    /* 9. Shooting — only alive players can shoot */
+    if (IsKeyPressed(KEY_E) && Jack_IsPlayable(&game->players[0])) {
         Shard_Shoot(game->shards, game->players[0].position,
                     game->players[0].facingDir);
         Jack_TriggerShoot(&game->players[0]);
     }
-    if (IsKeyPressed(KEY_M)) {
+    if (IsKeyPressed(KEY_M) && Jack_IsPlayable(&game->players[1])) {
         Shard_Shoot(game->shards, game->players[1].position,
                     game->players[1].facingDir);
         Jack_TriggerShoot(&game->players[1]);
