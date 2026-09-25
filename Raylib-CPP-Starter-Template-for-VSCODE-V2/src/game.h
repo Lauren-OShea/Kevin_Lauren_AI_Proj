@@ -21,6 +21,8 @@ typedef struct Game {
     Enemy           enemies[MAX_ENEMIES];
     EnemyProjectile enemyProjectiles[MAX_ENEMY_PROJECTILES];
     Platform        platforms[MAX_PLATFORMS];
+    PlayerSprites   sprites;      /* shared between both players */
+    Texture2D       background;
     int             score;
     bool            active;
     float           frameCounter;

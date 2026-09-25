@@ -5,28 +5,16 @@
  *  Background asset
  * ============================================================ */
 
-static Texture2D g_backgroundTex    = { 0 };
-static bool      g_backgroundLoaded = false;
+static void LoadBackground(Game *game) {
+    game->background = LoadTexture("assets/background.png");
 
-static void LoadBackgroundAsset(void) {
-    if (g_backgroundLoaded) return;
-
-    g_backgroundTex = LoadTexture("assets/background.png");
-
-    if (g_backgroundTex.id == 0) {
+    if (game->background.id == 0) {
+        TraceLog(LOG_ERROR, "FAILED to load assets/background.png");
         Image img = GenImageColor(SCREEN_WIDTH, SCREEN_HEIGHT, MAGENTA);
-        g_backgroundTex = LoadTextureFromImage(img);
+        game->background = LoadTextureFromImage(img);
         UnloadImage(img);
-    }
-
-    g_backgroundLoaded = true;
-}
-
-static void UnloadBackgroundAsset(void) {
-    if (g_backgroundLoaded && g_backgroundTex.id != 0) {
-        UnloadTexture(g_backgroundTex);
-        g_backgroundTex.id = 0;
-        g_backgroundLoaded = false;
+    } else {
+        SetTextureFilter(game->background, TEXTURE_FILTER_POINT);
     }
 }
 
@@ -67,13 +55,13 @@ static void DrawAnimatedOverlay(void) {
                            (Color){ 0, 0, 0, 0 }, (Color){ 0, 0, 0, 120 });
 }
 
-static void DrawBackground(void) {
+static void DrawBackground(const Game *game) {
     Rectangle src = { 0, 0,
-                      (float)g_backgroundTex.width,
-                      (float)g_backgroundTex.height };
+                      (float)game->background.width,
+                      (float)game->background.height };
     Rectangle dst = { 0, 0, (float)SCREEN_WIDTH, (float)SCREEN_HEIGHT };
 
-    DrawTexturePro(g_backgroundTex, src, dst, (Vector2){ 0, 0 }, 0.0f, WHITE);
+    DrawTexturePro(game->background, src, dst, (Vector2){ 0, 0 }, 0.0f, WHITE);
     DrawAnimatedOverlay();
 }
 
@@ -206,18 +194,56 @@ static void ResolveShardProjectileCollisions(Game *game) {
 }
 
 /* ============================================================
+ *  Player-vs-threat collision (handled here so enemy.c stays
+ *  unchanged and unaware of player invulnerability)
+ * ============================================================ */
+
+static void ApplyPlayerThreatCollisions(Game *game,
+                                        const Rectangle playerHitboxes[PLAYER_COUNT])
+{
+    for (int p = 0; p < PLAYER_COUNT; p++) {
+        if (!Jack_IsVulnerable(&game->players[p])) continue;
+
+        bool hit = false;
+
+        /* vs. enemies — stunned enemies cannot hurt the player */
+        for (int i = 0; i < MAX_ENEMIES && !hit; i++) {
+            if (!game->enemies[i].active) continue;
+            if ( game->enemies[i].stunTimer > 0.0f) continue;   /* NEW */
+            if (CheckCollisionRecs(Enemy_GetRect(&game->enemies[i]),
+                                   playerHitboxes[p])) {
+                hit = true;
+            }
+        }
+
+        /* vs. enemy projectiles */
+        for (int j = 0; j < MAX_ENEMY_PROJECTILES && !hit; j++) {
+            if (!game->enemyProjectiles[j].active) continue;
+            if (CheckCollisionCircleRec(game->enemyProjectiles[j].position,
+                                        ENEMY_PROJECTILE_RADIUS,
+                                        playerHitboxes[p])) {
+                game->enemyProjectiles[j].active = false;
+                hit = true;
+            }
+        }
+
+        if (hit) Jack_Knockdown(&game->players[p]);
+    }
+}
+
+/* ============================================================
  *  Public API
  * ============================================================ */
 
-/* Player 1 = left side, cool blue. Player 2 = right side, warm pink. */
 static const JackControls P1_CONTROLS = { KEY_A, KEY_D, KEY_SPACE };
 static const JackControls P2_CONTROLS = { KEY_LEFT, KEY_RIGHT, KEY_UP };
 
 void Game_Init(Game *game) {
     Jack_Init(&game->players[0], (Vector2){ 130, 400 },
-              (Color){ 120, 200, 255, 255 });
+              WHITE);                                            /* P1 – no tint    */
+
     Jack_Init(&game->players[1], (Vector2){ 670, 400 },
-              (Color){ 255, 150, 200, 255 });
+              (Color){ 255, 110, 110, 255 });                    /* P2 – red tint   */
 
     Shard_InitAll(game->shards);
     Enemy_InitAll(game->enemies);
@@ -246,7 +272,7 @@ void Game_Update(Game *game) {
     Shard_UpdateAll(game->shards, SCREEN_WIDTH);
     ResolveShardPlatformCollisions(game);
 
-    /* 3. Build player data arrays for enemies */
+    /* 3. Build player data */
     Vector2   playerPositions[PLAYER_COUNT];
     Rectangle playerHitboxes [PLAYER_COUNT];
     for (int p = 0; p < PLAYER_COUNT; p++) {
@@ -259,45 +285,51 @@ void Game_Update(Game *game) {
         };
     }
 
-    /* 4. Enemies — hurt ANY player → game over */
-    if (Enemy_UpdateAll(game->enemies, playerPositions, playerHitboxes,
-                        PLAYER_COUNT, game->enemyProjectiles)) {
-        game->active = false;
-        return;
+    /* 4. Enemies move & shoot.
+     *    We pass NULL hitboxes so enemy.c does not internally
+     *    flag player hits — game.c handles that below. */
+    Rectangle nullHitboxes[PLAYER_COUNT];
+    for (int p = 0; p < PLAYER_COUNT; p++) {
+        nullHitboxes[p] = (Rectangle){ -10000, -10000, 0, 0 };
     }
+    Enemy_UpdateAll(game->enemies, playerPositions, nullHitboxes,
+                    PLAYER_COUNT, game->enemyProjectiles);
 
-    /* 5. Enemy projectiles */
-    if (EnemyProjectile_UpdateAll(game->enemyProjectiles, playerHitboxes,
-                                  PLAYER_COUNT, SCREEN_WIDTH, SCREEN_HEIGHT)) {
-        game->active = false;
-        return;
-    }
+    /* 5. Projectiles move — again pass NULL hitboxes so they
+     *    don't self-destruct on collision; we handle that below. */
+    EnemyProjectile_UpdateAll(game->enemyProjectiles, nullHitboxes,
+                              PLAYER_COUNT, SCREEN_WIDTH, SCREEN_HEIGHT);
 
-    /* 6. Shard ↔ Enemy */
+    /* 6. Apply player-vs-threat collisions (knockdown logic) */
+    ApplyPlayerThreatCollisions(game, playerHitboxes);
+
+    /* 7. Shard ↔ Enemy */
     ResolveShardEnemyCollisions(game);
 
-    /* 7. Shard ↔ Projectile (deflect) */
+    /* 8. Shard ↔ Enemy projectile (deflect) */
     ResolveShardProjectileCollisions(game);
 
-    /* 8. Shooting — shards never hit players, only enemies + platforms */
+    /* 9. Shooting */
     if (IsKeyPressed(KEY_E)) {
         Shard_Shoot(game->shards, game->players[0].position,
                     game->players[0].facingDir);
+        Jack_TriggerShoot(&game->players[0]);
     }
     if (IsKeyPressed(KEY_M)) {
         Shard_Shoot(game->shards, game->players[1].position,
                     game->players[1].facingDir);
+        Jack_TriggerShoot(&game->players[1]);
     }
 }
 
 void Game_Draw(const Game *game) {
-    DrawBackground();
+    DrawBackground(game);
     Platform_DrawAll(game->platforms);
     Shard_DrawAll(game->shards);
     EnemyProjectile_DrawAll(game->enemyProjectiles);
     Enemy_DrawAll(game->enemies);
-    Jack_Draw(&game->players[0]);
-    Jack_Draw(&game->players[1]);
+    Jack_Draw(&game->players[0], &game->sprites);
+    Jack_Draw(&game->players[1], &game->sprites);
     DrawHUD(game);
 }
 
@@ -309,7 +341,8 @@ void Game_Run(Game *game) {
     InitWindow(SCREEN_WIDTH, SCREEN_HEIGHT, GAME_TITLE);
     SetTargetFPS(TARGET_FPS);
 
-    LoadBackgroundAsset();
+    LoadBackground(game);
+    PlayerSprites_Load(&game->sprites);
     Game_Init(game);
 
     while (!WindowShouldClose()) {
@@ -325,6 +358,7 @@ void Game_Run(Game *game) {
         EndDrawing();
     }
 
-    UnloadBackgroundAsset();
+    PlayerSprites_Unload(&game->sprites);
+    if (game->background.id != 0) UnloadTexture(game->background);
     CloseWindow();
 }
