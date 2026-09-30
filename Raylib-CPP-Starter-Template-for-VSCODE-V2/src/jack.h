@@ -11,9 +11,11 @@
 #define JACK_INVULN_TIME    2.0f
 
 typedef struct JackControls {
-    int keyLeft;
-    int keyRight;
-    int keyJump;
+    int left;
+    int right;
+    int up;
+    int down;
+    int jump;   /* dedicated jump key */
 } JackControls;
 
 typedef enum JackAnim {
@@ -51,6 +53,11 @@ typedef struct Jack {
     float   facingDir;
     bool    onGround;
 
+    /* ----- Ladder state ----- */
+    bool    onLadder;      /* currently overlapping a ladder */
+    bool    climbing;      /* attached and climbing */
+    int     ladderIndex;   /* index into ladders[] while attached, else -1 */
+
     JackState state;
     JackAnim  currentAnim;
     float     animTimer;
@@ -66,9 +73,10 @@ void PlayerSprites_Load  (PlayerSprites *sprites);
 void PlayerSprites_Unload(PlayerSprites *sprites);
 
 void Jack_Init  (Jack *jack, Vector2 startPos, Color tintColor);
-void Jack_Update(Jack *jack, const Platform platforms[MAX_PLATFORMS],
-                 const JackControls *controls,
-                 int worldW, int worldH);     /* NEW — level bounds instead of screen */
+void Jack_Update(Jack *jack,
+                 const Platform platforms[MAX_PLATFORMS],
+                 const Ladder   ladders[MAX_LADDERS],
+                 const JackControls *controls, int worldW, int worldH);
 void Jack_Draw  (const Jack *jack, const PlayerSprites *sprites);
 
 void Jack_TriggerShoot(Jack *jack);

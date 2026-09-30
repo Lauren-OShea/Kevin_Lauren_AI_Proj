@@ -7,6 +7,8 @@
 #include "shard.h"
 #include "enemy.h"
 #include "platform.h"
+#include "frozen.h"
+#include "particle.h"
 
 #define SCREEN_WIDTH   800
 #define SCREEN_HEIGHT  500
@@ -16,6 +18,7 @@
 #define PLAYER_COUNT   2
 #define MAX_LEVELS     20
 
+
 typedef enum GameState {
     GAME_STATE_MENU = 0,
     GAME_STATE_LEVEL_SELECT,
@@ -23,14 +26,19 @@ typedef enum GameState {
     GAME_STATE_PLAYING
 } GameState;
 
+
+
 typedef struct Game {
     Jack            players[PLAYER_COUNT];
     Shard           shards[MAX_SHARDS];
     Enemy           enemies[MAX_ENEMIES];
     EnemyProjectile enemyProjectiles[MAX_ENEMY_PROJECTILES];
     Platform        platforms[MAX_PLATFORMS];
+    Ladder          ladders[MAX_LADDERS];
     PlayerSprites   sprites;
     Texture2D       background;
+    FrozenMap       frozen;
+    ParticleSystem  particles;
 
     int    score;
     bool   active;

@@ -2,6 +2,12 @@
 #include <math.h>
 #include <string.h>
 
+/* Forward declarations for static helpers defined later */
+static void BuildLadders(Game *game);
+static bool LadderBlockedByPlatform(const Game *game,
+                                    float x0, float x1,
+                                    float topY, float bottomY);
+
 /* ============================================================
  *  Level data
  * ============================================================ */
@@ -1138,6 +1144,87 @@ static void LoadLevelPlatforms(Game *game, const LevelDef *L) {
     for (int i = 0; i < L->nPlatforms && i < MAX_PLATFORMS; i++) {
         Platform_Add(game->platforms, L->platforms[i]);
     }
+
+    BuildLadders(game);
+}
+
+/* ============================================================
+ *  Ladder generation
+ * ============================================================ */
+
+static bool LadderBlockedByPlatform(const Game *game,
+                                    float x0, float x1,
+                                    float topY, float bottomY) {
+    for (int i = 0; i < MAX_PLATFORMS; i++) {
+        if (!game->platforms[i].active) continue;
+
+        Rectangle p = game->platforms[i].bounds;
+
+        bool hOverlap = (p.x < x1) && (p.x + p.width > x0);
+        if (!hOverlap) continue;
+
+        if (p.y > topY + 1.0f && p.y < bottomY - 1.0f) {
+            return true;
+        }
+    }
+    return false;
+}
+
+static float NextPlatformTopBelow(const Game *game,
+                                  float x0, float x1, float topY) {
+    float best = 1e9f;
+    for (int i = 0; i < MAX_PLATFORMS; i++) {
+        if (!game->platforms[i].active) continue;
+        Rectangle p = game->platforms[i].bounds;
+
+        if (p.y <= topY + 1.0f) continue;
+
+        bool hOverlap = (p.x < x1) && (p.x + p.width > x0);
+        if (!hOverlap) continue;
+
+        if (p.y < best) best = p.y;
+    }
+    return best;
+}
+
+static void BuildLadders(Game *game) {
+    Ladder_InitAll(game->ladders);
+
+    for (int i = 0; i < MAX_PLATFORMS; i++) {
+        if (!game->platforms[i].active) continue;
+
+        Rectangle upper = game->platforms[i].bounds;
+
+        /* Skip the ground floor */
+        if (upper.y >= 440.0f) continue;
+
+        float ladderX = upper.x + upper.width * 0.5f - LADDER_WIDTH * 0.5f;
+        if (ladderX < upper.x)
+            ladderX = upper.x;
+        if (ladderX + LADDER_WIDTH > upper.x + upper.width)
+            ladderX = upper.x + upper.width - LADDER_WIDTH;
+
+        float ladderTop = upper.y - 4.0f;
+
+        float lowerTop = NextPlatformTopBelow(game, ladderX,
+                                              ladderX + LADDER_WIDTH,
+                                              upper.y + upper.height);
+
+        if (lowerTop > 1e8f) continue;
+
+        float ladderBottom = lowerTop - 2.0f;
+
+        if (ladderBottom <= ladderTop + 8.0f) continue;
+
+        if (LadderBlockedByPlatform(game, ladderX, ladderX + LADDER_WIDTH,
+                                    ladderTop + 4.0f, ladderBottom)) {
+            continue;
+        }
+
+        Ladder_Add(game->ladders,
+                   (Rectangle){ ladderX, ladderTop,
+                                LADDER_WIDTH, ladderBottom - ladderTop });
+    }
 }
 
 static void SpawnEnemiesForLevel(Game *game, const LevelDef *L) {
@@ -1184,6 +1271,9 @@ void Game_LoadLevel(Game *game, int idx) {
     Shard_InitAll(game->shards);
     Enemy_InitAll(game->enemies);
     EnemyProjectile_InitAll(game->enemyProjectiles);
+
+    Frozen_Init(&game->frozen);
+    Particle_InitAll(&game->particles);
 
     SpawnEnemiesForLevel(game, L);
 
@@ -1295,8 +1385,8 @@ static void ApplyPlayerThreatCollisions(Game *game,
  *  Public API
  * ============================================================ */
 
-static const JackControls P1_CONTROLS = { KEY_A, KEY_D, KEY_SPACE };
-static const JackControls P2_CONTROLS = { KEY_LEFT, KEY_RIGHT, KEY_UP };
+static const JackControls P1_CONTROLS = { KEY_A, KEY_D, KEY_W, KEY_S, KEY_SPACE };
+static const JackControls P2_CONTROLS = { KEY_LEFT, KEY_RIGHT, KEY_UP, KEY_DOWN, KEY_UP };
 
 void Game_Init(Game *game) {
     memset(game->levelCompleted, 0, sizeof(game->levelCompleted));
@@ -1308,6 +1398,7 @@ void Game_Init(Game *game) {
     game->active               = false;
     game->levelCompleteTimer   = 0.0f;
     game->levelTimer           = 0.0f;
+    game->frameCounter = 0.0f;
     game->state                = GAME_STATE_MENU;
     game->camera               = (Camera2D){ 0 };
 }
@@ -1340,10 +1431,33 @@ void Game_Update(Game *game) {
 
     const LevelDef *L = &LEVELS[game->currentLevel];
 
-    Jack_Update(&game->players[0], game->platforms, &P1_CONTROLS,
+    Jack_Update(&game->players[0], game->platforms, game->ladders, &P1_CONTROLS,
                 L->worldW, L->worldH);
-    Jack_Update(&game->players[1], game->platforms, &P2_CONTROLS,
+    Jack_Update(&game->players[1], game->platforms, game->ladders, &P2_CONTROLS,
                 L->worldW, L->worldH);
+
+    /* ----- Freeze the world under / around each living player ----- */
+float radiusPx = FROZEN_RADIUS_TILES * FROZEN_TILE_SIZE;
+
+for (int p = 0; p < PLAYER_COUNT; p++) {
+    Jack *j = &game->players[p];
+    if (j->state != JACK_STATE_ALIVE) continue;
+
+    /* Freeze circle around the player's feet. */
+    Vector2 feet = { j->position.x, j->position.y + j->radiusY };
+    Frozen_FreezeCircle(&game->frozen, feet, radiusPx);
+
+    /* Spawn icy particles when moving horizontally on ground or climbing. */
+    bool moving = IsKeyDown(
+        p == 0 ? KEY_A : KEY_LEFT) || IsKeyDown(p == 0 ? KEY_D : KEY_RIGHT);
+
+    if (moving || j->climbing) {
+        Particle_SpawnIcy(&game->particles, feet, 30.0f);
+    }
+}
+
+Particle_UpdateAll(&game->particles, GetFrameTime());
+
 
     Shard_UpdateAll(game->shards, L->worldW);
     ResolveShardPlatformCollisions(game);
@@ -1412,7 +1526,8 @@ void Game_Draw(const Game *game) {
     if (game->state == GAME_STATE_PLAYING) {
         BeginMode2D(game->camera);
 
-            Platform_DrawAll(game->platforms);
+            Ladder_DrawAll(game->ladders, &game->frozen);
+            Platform_DrawAll(game->platforms, &game->frozen);
             Shard_DrawAll(game->shards);
             Enemy_DrawAll(game->enemies);
             EnemyProjectile_DrawAll(game->enemyProjectiles);
