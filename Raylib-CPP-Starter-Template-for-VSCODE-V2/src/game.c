@@ -1,6 +1,12 @@
 #include "game.h"
 #include <math.h>
 
+/* Forward declarations for static helpers defined later */
+static void BuildLadders(Game *game);
+static bool LadderBlockedByPlatform(const Game *game,
+                                    float x0, float x1,
+                                    float topY, float bottomY);
+
 /* ============================================================
  *  Background asset
  * ============================================================ */
@@ -86,7 +92,6 @@ static void DrawHUD(const Game *game) {
     DrawText(TextFormat("SCORE: %d", game->score),
              20, 20, 30, (Color){ 232, 245, 255, 255 });
 
-    /* Lives — P1 top-left, P2 top-right */
     DrawLivesRow(game->players[0].lives, 30, 70,
                  (Color){ 120, 200, 255, 255 });
 
@@ -94,10 +99,10 @@ static void DrawHUD(const Game *game) {
     DrawLivesRow(game->players[1].lives, p2StartX, 70,
                  (Color){ 255, 110, 110, 255 });
 
-    DrawText("P1: A/D  SPACE  E",
+    DrawText("P1: A/D  W/S  SPACE  E",
              20, SCREEN_HEIGHT - 30, 18, (Color){ 200, 220, 240, 200 });
     DrawText("P2: ARROWS  UP  M",
-             SCREEN_WIDTH - 200, SCREEN_HEIGHT - 30, 18,
+             SCREEN_WIDTH - 220, SCREEN_HEIGHT - 30, 18,
              (Color){ 240, 200, 220, 200 });
 
     if (!game->active) {
@@ -153,7 +158,6 @@ static Rectangle MenuItemRect(int i) {
 }
 
 static void UpdateMenu(Game *game) {
-    /* Keyboard navigation */
     if (IsKeyPressed(KEY_DOWN) || IsKeyPressed(KEY_S)) {
         game->menuSelection = (game->menuSelection + 1) % MENU_COUNT;
     }
@@ -161,8 +165,6 @@ static void UpdateMenu(Game *game) {
         game->menuSelection = (game->menuSelection + MENU_COUNT - 1) % MENU_COUNT;
     }
 
-    /* Mouse hover (only when the mouse actually moves, so it doesn't
-       fight with keyboard navigation) */
     Vector2 mouse   = GetMousePosition();
     Vector2 delta   = GetMouseDelta();
     bool    moved   = (delta.x != 0.0f || delta.y != 0.0f);
@@ -182,7 +184,7 @@ static void UpdateMenu(Game *game) {
 
     switch (game->menuSelection) {
         case MENU_PLAY:
-            Game_Init(game);                 /* fresh run, sets state to PLAYING */
+            Game_Init(game);
             break;
         case MENU_CONTROLS:
             game->state = GAME_STATE_CONTROLS;
@@ -198,7 +200,6 @@ static void DrawMenu(const Game *game) {
 
     DrawRectangle(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT, (Color){ 0, 0, 0, 90 });
 
-    /* Title with a gentle bob */
     const char *title    = "JACK FROST";
     const char *subtitle = "Freeze them all";
     int   titleSize = 72;
@@ -213,7 +214,6 @@ static void DrawMenu(const Game *game) {
              SCREEN_WIDTH / 2 - MeasureText(subtitle, 22) / 2,
              titleY + titleSize + 6, 22, (Color){ 170, 210, 240, 255 });
 
-    /* Buttons */
     for (int i = 0; i < MENU_COUNT; i++) {
         Rectangle r        = MenuItemRect(i);
         bool      selected = (game->menuSelection == i);
@@ -261,19 +261,18 @@ static void DrawControls(void) {
              SCREEN_WIDTH / 2 - MeasureText(title, 48) / 2,
              70, 48, (Color){ 232, 245, 255, 255 });
 
-    /* TODO: adjust these to match the keys used in Jack_Update() */
     const char *lines[] = {
-        "Move:   A / D  or  Left / Right",
-        "Jump:   W / Space  or  Up",
-        "Shoot:  Left Mouse Button",
+        "P1: A / D move,  W / S climb,  Space jump,  E shoot",
+        "P2: Left / Right move,  Up / Down climb,  Up jump,  M shoot",
+        "Climb ladders with W / S (or Up / Down)",
         "Stun enemies with shards - don't touch them!"
     };
     int count = (int)(sizeof(lines) / sizeof(lines[0]));
 
     for (int i = 0; i < count; i++) {
         DrawText(lines[i],
-                 SCREEN_WIDTH / 2 - MeasureText(lines[i], 24) / 2,
-                 170 + i * 44, 24, (Color){ 200, 225, 245, 255 });
+                 SCREEN_WIDTH / 2 - MeasureText(lines[i], 20) / 2,
+                 170 + i * 44, 20, (Color){ 200, 225, 245, 255 });
     }
 
     const char *back = "Press Esc or click to go back";
@@ -296,15 +295,94 @@ static void BuildLevel(Game *game) {
     Platform_Add(game->platforms, (Rectangle){  40, 200, 160, 24 });
     Platform_Add(game->platforms, (Rectangle){ 600, 200, 160, 24 });
     Platform_Add(game->platforms, (Rectangle){ 320, 120, 160, 24 });
+
+    BuildLadders(game);
 }
 
 /* ============================================================
- *  Enemy placement - all enemies spawn once at level start
+ *  Ladder generation
+ * ============================================================ */
+
+static bool LadderBlockedByPlatform(const Game *game,
+                                    float x0, float x1,
+                                    float topY, float bottomY) {
+    for (int i = 0; i < MAX_PLATFORMS; i++) {
+        if (!game->platforms[i].active) continue;
+
+        Rectangle p = game->platforms[i].bounds;
+
+        bool hOverlap = (p.x < x1) && (p.x + p.width > x0);
+        if (!hOverlap) continue;
+
+        if (p.y > topY + 1.0f && p.y < bottomY - 1.0f) {
+            return true;
+        }
+    }
+    return false;
+}
+
+static float NextPlatformTopBelow(const Game *game,
+                                  float x0, float x1, float topY) {
+    float best = 1e9f;
+    for (int i = 0; i < MAX_PLATFORMS; i++) {
+        if (!game->platforms[i].active) continue;
+        Rectangle p = game->platforms[i].bounds;
+
+        if (p.y <= topY + 1.0f) continue;
+
+        bool hOverlap = (p.x < x1) && (p.x + p.width > x0);
+        if (!hOverlap) continue;
+
+        if (p.y < best) best = p.y;
+    }
+    return best;
+}
+
+static void BuildLadders(Game *game) {
+    Ladder_InitAll(game->ladders);
+
+    for (int i = 0; i < MAX_PLATFORMS; i++) {
+        if (!game->platforms[i].active) continue;
+
+        Rectangle upper = game->platforms[i].bounds;
+
+        /* Skip the ground floor */
+        if (upper.y >= 440.0f) continue;
+
+        float ladderX = upper.x + upper.width * 0.5f - LADDER_WIDTH * 0.5f;
+        if (ladderX < upper.x)
+            ladderX = upper.x;
+        if (ladderX + LADDER_WIDTH > upper.x + upper.width)
+            ladderX = upper.x + upper.width - LADDER_WIDTH;
+
+        float ladderTop = upper.y - 4.0f;
+
+        float lowerTop = NextPlatformTopBelow(game, ladderX,
+                                              ladderX + LADDER_WIDTH,
+                                              upper.y + upper.height);
+
+        if (lowerTop > 1e8f) continue;
+
+        float ladderBottom = lowerTop - 2.0f;
+
+        if (ladderBottom <= ladderTop + 8.0f) continue;
+
+        if (LadderBlockedByPlatform(game, ladderX, ladderX + LADDER_WIDTH,
+                                    ladderTop + 4.0f, ladderBottom)) {
+            continue;
+        }
+
+        Ladder_Add(game->ladders,
+                   (Rectangle){ ladderX, ladderTop,
+                                LADDER_WIDTH, ladderBottom - ladderTop });
+    }
+}
+
+/* ============================================================
+ *  Enemy placement
  * ============================================================ */
 
 static void SpawnAllEnemies(Game *game) {
-    /* Skip the ground floor (index 0) so enemies start on raised platforms.
-       One enemy per platform from index 1 onward. */
     for (int i = 1; i < MAX_PLATFORMS; i++) {
         if (!game->platforms[i].active) continue;
 
@@ -353,10 +431,9 @@ static void ResolveShardEnemyCollisions(Game *game) {
 
             Rectangle er = Enemy_GetRect(&game->enemies[j]);
             if (CheckCollisionCircleRec(game->shards[i].position, SHARD_RADIUS, er)) {
-                /* Consume the shard; stun (do NOT kill) the enemy */
                 game->shards[i].active = false;
                 if (Enemy_Stun(&game->enemies[j])) {
-                    game->score += 10;   /* reward still given on stun */
+                    game->score += 10;
                 }
                 break;
             }
@@ -396,7 +473,6 @@ static void ApplyPlayerThreatCollisions(Game *game,
 
         bool hit = false;
 
-        /* vs. enemies — stunned enemies cannot hurt the player */
         for (int i = 0; i < MAX_ENEMIES && !hit; i++) {
             if (!game->enemies[i].active)           continue;
             if ( game->enemies[i].stunTimer > 0.0f) continue;
@@ -406,7 +482,6 @@ static void ApplyPlayerThreatCollisions(Game *game,
             }
         }
 
-        /* vs. enemy projectiles */
         for (int j = 0; j < MAX_ENEMY_PROJECTILES && !hit; j++) {
             if (!game->enemyProjectiles[j].active) continue;
             if (CheckCollisionCircleRec(game->enemyProjectiles[j].position,
@@ -425,8 +500,8 @@ static void ApplyPlayerThreatCollisions(Game *game,
  *  Public API
  * ============================================================ */
 
-static const JackControls P1_CONTROLS = { KEY_A, KEY_D, KEY_SPACE };
-static const JackControls P2_CONTROLS = { KEY_LEFT, KEY_RIGHT, KEY_UP };
+static const JackControls P1_CONTROLS = { KEY_A, KEY_D, KEY_W, KEY_S, KEY_SPACE };
+static const JackControls P2_CONTROLS = { KEY_LEFT, KEY_RIGHT, KEY_UP, KEY_DOWN, KEY_UP };
 
 void Game_Init(Game *game) {
     Jack_Init(&game->players[0], (Vector2){ 130, 400 }, WHITE);
@@ -453,15 +528,12 @@ void Game_Restart(Game *game) {
 void Game_Update(Game *game) {
     if (!game->active) return;
 
-    /* 1. Players */
-    Jack_Update(&game->players[0], game->platforms, &P1_CONTROLS);
-    Jack_Update(&game->players[1], game->platforms, &P2_CONTROLS);
+    Jack_Update(&game->players[0], game->platforms, game->ladders, &P1_CONTROLS);
+    Jack_Update(&game->players[1], game->platforms, game->ladders, &P2_CONTROLS);
 
-    /* 2. Shards */
     Shard_UpdateAll(game->shards, SCREEN_WIDTH);
     ResolveShardPlatformCollisions(game);
 
-    /* 3. Player data arrays */
     Vector2   playerPositions[PLAYER_COUNT];
     Rectangle playerHitboxes [PLAYER_COUNT];
     for (int p = 0; p < PLAYER_COUNT; p++) {
@@ -474,7 +546,6 @@ void Game_Update(Game *game) {
         };
     }
 
-    /* 4. Enemies move & shoot (null hitboxes; game.c handles hits) */
     Rectangle nullHitboxes[PLAYER_COUNT];
     for (int p = 0; p < PLAYER_COUNT; p++) {
         nullHitboxes[p] = (Rectangle){ -10000, -10000, 0, 0 };
@@ -485,23 +556,17 @@ void Game_Update(Game *game) {
     EnemyProjectile_UpdateAll(game->enemyProjectiles, nullHitboxes,
                               PLAYER_COUNT, SCREEN_WIDTH, SCREEN_HEIGHT);
 
-    /* 5. Player-vs-threat (lives loss + fling) */
     ApplyPlayerThreatCollisions(game, playerHitboxes);
 
-    /* 6. Both players eliminated? End the level. */
     if (game->players[0].state == JACK_STATE_GONE &&
         game->players[1].state == JACK_STATE_GONE) {
         game->active = false;
         return;
     }
 
-    /* 7. Shard ↔ Enemy */
     ResolveShardEnemyCollisions(game);
-
-    /* 8. Shard ↔ Enemy projectile (deflect) */
     ResolveShardProjectileCollisions(game);
 
-    /* 9. Shooting — only alive players can shoot */
     if (IsKeyPressed(KEY_E) && Jack_IsPlayable(&game->players[0])) {
         Shard_Shoot(game->shards, game->players[0].position,
                     game->players[0].facingDir);
@@ -528,6 +593,7 @@ void Game_Draw(const Game *game) {
 
         case GAME_STATE_PLAYING:
             Platform_DrawAll(game->platforms);
+            Ladder_DrawAll(game->ladders);
             Shard_DrawAll(game->shards);
             Enemy_DrawAll(game->enemies);
             EnemyProjectile_DrawAll(game->enemyProjectiles);
@@ -551,7 +617,6 @@ void Game_Run(Game *game) {
     PlayerSprites_Load(&game->sprites);
     Game_Init(game);
 
-    /* Start on the menu instead of jumping straight into play */
     game->state         = GAME_STATE_MENU;
     game->menuSelection = MENU_PLAY;
     game->quitRequested = false;

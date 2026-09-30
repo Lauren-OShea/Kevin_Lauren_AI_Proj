@@ -1,5 +1,6 @@
 #include "jack.h"
 #include <math.h>
+#include <stddef.h>
 
 /* ============================================================
  *  Animation metadata
@@ -84,6 +85,10 @@ void Jack_Init(Jack *jack, Vector2 startPos, Color tintColor) {
     jack->facingDir = 1.0f;
     jack->onGround  = false;
 
+    jack->onLadder    = false;
+    jack->climbing    = false;
+    jack->ladderIndex = -1;
+
     jack->state       = JACK_STATE_ALIVE;
     jack->currentAnim = JACK_ANIM_IDLE;
     jack->animTimer   = 0.0f;
@@ -119,6 +124,9 @@ void Jack_Hit(Jack *jack) {
         jack->velocityX = -jack->facingDir * 9.0f;
         jack->velocityY = -11.0f;
         jack->onGround  = false;
+        jack->onLadder  = false;
+        jack->climbing  = false;
+        jack->ladderIndex = -1;
     }
 }
 
@@ -144,7 +152,28 @@ static inline float Jack_Bottom(const Jack *j) {
     return j->position.y + j->radiusY;
 }
 
-void Jack_Update(Jack *jack, const Platform platforms[MAX_PLATFORMS],
+/* Returns index of ladder the player's box overlaps, or -1. */
+static int FindOverlappingLadder(const Jack *jack,
+                                 const Ladder ladders[MAX_LADDERS],
+                                 float expandX, float expandY)
+{
+    Rectangle jBox = {
+        jack->position.x - jack->radiusX - expandX,
+        jack->position.y - jack->radiusY - expandY,
+        (jack->radiusX + expandX) * 2.0f,
+        (jack->radiusY + expandY) * 2.0f
+    };
+
+    for (int i = 0; i < MAX_LADDERS; i++) {
+        if (!ladders[i].active) continue;
+        if (CheckCollisionRecs(jBox, ladders[i].bounds)) return i;
+    }
+    return -1;
+}
+
+void Jack_Update(Jack *jack,
+                 const Platform platforms[MAX_PLATFORMS],
+                 const Ladder   ladders[MAX_LADDERS],
                  const JackControls *controls)
 {
     float dt = GetFrameTime();
@@ -155,7 +184,7 @@ void Jack_Update(Jack *jack, const Platform platforms[MAX_PLATFORMS],
     Vector2 prevPosition = jack->position;
 
     /* ============================================================
-     *  Flung off-screen — fly, then disappear
+     *  Flung off-screen - fly, then disappear
      * ============================================================ */
     if (jack->state == JACK_STATE_FLUNG) {
         jack->velocityY += jack->gravity;
@@ -175,17 +204,130 @@ void Jack_Update(Jack *jack, const Platform platforms[MAX_PLATFORMS],
     if (jack->state == JACK_STATE_GONE) return;
 
     /* ============================================================
+     *  Ladder logic (alive only)
+     * ============================================================ */
+    bool jumpPressed = IsKeyPressed(controls->jump) ||
+                       IsKeyPressed(controls->up);   /* up also jumps when not on ladder */
+
+    /* --- Try to grab a ladder --- */
+    if (!jack->climbing) {
+        int idx = FindOverlappingLadder(jack, ladders, 2.0f, 2.0f);
+        if (idx >= 0) {
+            jack->ladderIndex = idx;
+            jack->onLadder    = true;
+        } else {
+            jack->onLadder    = false;
+            jack->ladderIndex = -1;
+        }
+    } else {
+        /* While climbing, verify we're still on the same ladder. */
+        if (jack->ladderIndex < 0 ||
+            !ladders[jack->ladderIndex].active) {
+            jack->climbing    = false;
+            jack->onLadder    = false;
+            jack->ladderIndex = -1;
+        } else {
+            /* Keep attached even if we drift slightly off. */
+            jack->onLadder = true;
+        }
+    }
+
+    /* --- Enter climb when pressing up/down on a ladder --- */
+    if (!jack->climbing && jack->onLadder) {
+        if (IsKeyDown(controls->up) || IsKeyDown(controls->down)) {
+            jack->climbing = true;
+            jack->onGround = false;
+            jack->velocityY = 0.0f;
+        }
+    }
+
+    /* --- Climbing state --- */
+    /* --- Climbing state --- */
+if (jack->climbing && jack->ladderIndex >= 0) {
+    const Ladder *L = &ladders[jack->ladderIndex];
+    Rectangle lb = L->bounds;
+
+    /* Horizontal input dismounts */
+    bool leftPressed  = IsKeyDown(controls->left);
+    bool rightPressed = IsKeyDown(controls->right);
+
+    if (leftPressed || rightPressed) {
+        jack->climbing = false;
+        jack->onLadder = false;
+        jack->ladderIndex = -1;
+    } else if (jumpPressed) {
+        jack->climbing  = false;
+        jack->onLadder  = false;
+        jack->ladderIndex = -1;
+        jack->velocityY = -jack->jumpForce;
+        jack->onGround  = false;
+    } else {
+        /* Snap X to ladder centre */
+        jack->position.x = lb.x + lb.width * 0.5f;
+
+        /* Vertical climbing input */
+        float climb = 0.0f;
+        if (IsKeyDown(controls->up))   climb -= LADDER_CLIMB_SPEED;
+        if (IsKeyDown(controls->down)) climb += LADDER_CLIMB_SPEED;
+
+        jack->position.y += climb * dt;
+        jack->velocityY   = 0.0f;
+        jack->onGround    = false;
+
+        /* --- Find the platform the ladder belongs to (its top edge).
+         * The ladder top was generated as (upperPlatform.y - 4). So
+         * the platform top is approximately lb.y + 4. --- */
+        float platformTopY = lb.y + 4.0f;
+
+        /* --- Reached the top: put the player's FEET on the platform. --- */
+        if (Jack_Bottom(jack) <= platformTopY + 2.0f) {
+            jack->position.y = platformTopY - jack->radiusY;
+            jack->climbing    = false;
+            jack->onLadder    = false;
+            jack->ladderIndex = -1;
+            jack->onGround    = true;
+            jack->velocityY   = 0.0f;
+            return;
+        }
+
+        /* --- Bottom of ladder: sit on the lower platform, stay attached --- */
+        float bottom = lb.y + lb.height;
+        if (Jack_Bottom(jack) >= bottom) {
+            jack->position.y = bottom - jack->radiusY;
+            jack->onGround   = true;
+        }
+
+        /* Animation timers */
+        jack->animTimer += dt;
+        if (jack->invulnTimer > 0.0f) {
+            jack->invulnTimer -= dt;
+            if (jack->invulnTimer < 0.0f) jack->invulnTimer = 0.0f;
+        }
+        if (jack->shootTimer > 0.0f) {
+            jack->shootTimer -= dt;
+            if (jack->shootTimer < 0.0f) jack->shootTimer = 0.0f;
+        }
+
+        if (jack->currentAnim != JACK_ANIM_WALK) {
+            jack->currentAnim = JACK_ANIM_WALK;
+            jack->animTimer   = 0.0f;
+        }
+        return;
+    }
+}
+
+    /* ============================================================
      *  Normal alive behaviour
      * ============================================================ */
 
     bool moving = false;
 
-    if (IsKeyDown(controls->keyLeft)) {
+    if (IsKeyDown(controls->left)) {
         jack->position.x -= jack->moveSpeed;
         jack->facingDir = -1.0f;
         moving = true;
     }
-    if (IsKeyDown(controls->keyRight)) {
+    if (IsKeyDown(controls->right)) {
         jack->position.x += jack->moveSpeed;
         jack->facingDir = 1.0f;
         moving = true;
@@ -193,20 +335,6 @@ void Jack_Update(Jack *jack, const Platform platforms[MAX_PLATFORMS],
 
     /* ------------------------------------------------------------
      *  Horizontal platform collision
-     *
-     *  Runs EVERY frame (no longer gated on velocityY). The push is
-     *  skipped in two cases:
-     *
-     *    1. Standing on top of the platform (feet at/above top + 6).
-     *    2. The player was ALREADY inside the platform's column on
-     *       the previous frame — meaning they are legitimately
-     *       passing through from below / standing inside / rising
-     *       through, and must not be shoved sideways.
-     *
-     *  When the player ENTERS the column from the side (previous
-     *  frame's X did not overlap), the push fires immediately so
-     *  they cannot drift into the platform during a jump. This is
-     *  what prevents the "clipped onto the platform" bug.
      * ------------------------------------------------------------ */
     for (int i = 0; i < MAX_PLATFORMS; i++) {
         if (!platforms[i].active) continue;
@@ -220,16 +348,13 @@ void Jack_Update(Jack *jack, const Platform platforms[MAX_PLATFORMS],
         };
         if (!CheckCollisionRecs(jBox, p)) continue;
 
-        /* (1) Standing on top — no push */
         if (Jack_Bottom(jack) <= p.y + 6.0f) continue;
 
-        /* (2) Was already inside the column last frame — no push */
         bool wasOverlappingX =
             (prevPosition.x - jack->radiusX) < (p.x + p.width) &&
             (prevPosition.x + jack->radiusX) >  p.x;
         if (wasOverlappingX) continue;
 
-        /* Side collision — push out horizontally */
         float platCX = p.x + p.width * 0.5f;
         if (jack->position.x < platCX) {
             jack->position.x = p.x - jack->radiusX;
@@ -245,7 +370,7 @@ void Jack_Update(Jack *jack, const Platform platforms[MAX_PLATFORMS],
         jack->position.x = GetScreenWidth() - jack->radiusX;
 
     /* Jump */
-    if (IsKeyPressed(controls->keyJump) && jack->onGround) {
+    if (jumpPressed && jack->onGround) {
         jack->velocityY = -jack->jumpForce;
         jack->onGround  = false;
     }

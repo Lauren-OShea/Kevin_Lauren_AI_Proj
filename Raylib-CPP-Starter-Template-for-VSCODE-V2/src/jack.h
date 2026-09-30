@@ -11,9 +11,11 @@
 #define JACK_INVULN_TIME    2.0f
 
 typedef struct JackControls {
-    int keyLeft;
-    int keyRight;
-    int keyJump;
+    int left;
+    int right;
+    int up;
+    int down;
+    int jump;   /* dedicated jump key */
 } JackControls;
 
 typedef enum JackAnim {
@@ -25,7 +27,7 @@ typedef enum JackAnim {
 
 typedef enum JackState {
     JACK_STATE_ALIVE = 0,
-    JACK_STATE_FLUNG,   /* lost last life — flying off screen */
+    JACK_STATE_FLUNG,   /* lost last life - flying off screen */
     JACK_STATE_GONE     /* off screen, out of the game */
 } JackState;
 
@@ -49,6 +51,11 @@ typedef struct Jack {
     float   facingDir;
     bool    onGround;
 
+    /* ----- Ladder state ----- */
+    bool    onLadder;      /* currently overlapping a ladder */
+    bool    climbing;      /* attached and climbing */
+    int     ladderIndex;   /* index into ladders[] while attached, else -1 */
+
     JackState state;
     JackAnim  currentAnim;
     float     animTimer;
@@ -64,14 +71,16 @@ void PlayerSprites_Load  (PlayerSprites *sprites);
 void PlayerSprites_Unload(PlayerSprites *sprites);
 
 void Jack_Init  (Jack *jack, Vector2 startPos, Color tintColor);
-void Jack_Update(Jack *jack, const Platform platforms[MAX_PLATFORMS],
+void Jack_Update(Jack *jack,
+                 const Platform platforms[MAX_PLATFORMS],
+                 const Ladder   ladders[MAX_LADDERS],
                  const JackControls *controls);
 void Jack_Draw  (const Jack *jack, const PlayerSprites *sprites);
 
 void Jack_TriggerShoot(Jack *jack);
 void Jack_Hit         (Jack *jack);
-bool Jack_IsPlayable  (const Jack *jack);   /* alive → can move/shoot */
-bool Jack_IsVulnerable(const Jack *jack);   /* enemies can hurt them  */
-bool Jack_IsInvulnerable(const Jack *jack); /* should blink           */
+bool Jack_IsPlayable  (const Jack *jack);
+bool Jack_IsVulnerable(const Jack *jack);
+bool Jack_IsInvulnerable(const Jack *jack);
 
 #endif /* JACK_H */

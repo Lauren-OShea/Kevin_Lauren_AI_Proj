@@ -15,18 +15,22 @@
 #define TARGET_FPS     60
 #define PLAYER_COUNT   2
 
+
 typedef enum GameState {
     GAME_STATE_MENU = 0,
     GAME_STATE_CONTROLS,
     GAME_STATE_PLAYING
 } GameState;
 
+
+
 typedef struct Game {
-    Jack            players[PLAYER_COUNT];
+    Jack      players[PLAYER_COUNT];
     Shard     shards[MAX_SHARDS];
     Enemy     enemies[MAX_ENEMIES];
     EnemyProjectile enemyProjectiles[MAX_ENEMY_PROJECTILES];
     Platform  platforms[MAX_PLATFORMS];
+    Ladder    ladders[MAX_LADDERS];
     PlayerSprites   sprites;      /* shared between both players */
     Texture2D       background;
     int       score;
@@ -36,6 +40,7 @@ typedef struct Game {
     GameState state;           /* which screen we're on */
     int       menuSelection;   /* highlighted menu item */
     bool      quitRequested;   /* set by the Quit menu item */
+
 } Game;
 
 void Game_Init(Game *game);
