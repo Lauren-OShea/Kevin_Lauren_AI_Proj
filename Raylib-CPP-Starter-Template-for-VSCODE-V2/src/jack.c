@@ -36,7 +36,6 @@ static inline float AnimDuration(JackAnim a) {
 
 static void Jack_ApplyRandomFling(Jack *jack, float minPop, float maxPop)
 {
-    /* Guarantee horizontal motion — pick a side, then a magnitude */
     float side = (GetRandomValue(0, 1) == 0) ? -1.0f : 1.0f;
     float mag  = (float)GetRandomValue(8, 14);
 
@@ -133,7 +132,6 @@ void Jack_Hit(Jack *jack) {
     jack->invulnTimer = JACK_INVULN_TIME;
 
     if (jack->lives <= 0) {
-        /* Last life — fling in a random direction */
         jack->state = JACK_STATE_FLUNG;
         Jack_ApplyRandomFling(jack, 16.0f, 22.0f);
     }
@@ -177,9 +175,6 @@ void Jack_Update(Jack *jack, const Platform platforms[MAX_PLATFORMS],
         jack->position.y += jack->velocityY;
         jack->animTimer  += dt;
 
-        /* Leave gameplay when off-screen OR after a hard timeout.
-         * The timeout guarantees we never linger even on huge
-         * levels or if the fling arc happens to stay in-bounds. */
         if (jack->position.x < -150.0f ||
             jack->position.x > worldW + 150.0f ||
             jack->position.y < -300.0f          ||
@@ -256,21 +251,18 @@ void Jack_Update(Jack *jack, const Platform platforms[MAX_PLATFORMS],
     jack->position.y += jack->velocityY;
     bool landed = false;
 
-    /* One-way landing */
+    /* ---------- One-way landing ----------
+     * Requires the player's CENTER to be horizontally over the
+     * platform. Without this, the player can "land on air" when
+     * their wide AABB spans a narrow gap between two adjacent
+     * platforms even though their body is centered in the gap. */
     if (jack->velocityY >= 0.0f) {
-        Rectangle jackBox = {
-            jack->position.x - jack->radiusX,
-            jack->position.y - jack->radiusY,
-            jack->radiusX * 2,
-            jack->radiusY * 2
-        };
-
         for (int i = 0; i < MAX_PLATFORMS; i++) {
             if (!platforms[i].active) continue;
             Rectangle p = platforms[i].bounds;
 
-            if (jackBox.x + jackBox.width <= p.x) continue;
-            if (jackBox.x >= p.x + p.width)       continue;
+            if (jack->position.x < p.x)             continue;
+            if (jack->position.x > p.x + p.width)   continue;
 
             if (beforeBottomMove <= p.y + 1.0f && Jack_Bottom(jack) >= p.y) {
                 jack->position.y = p.y - jack->radiusY;
@@ -283,15 +275,7 @@ void Jack_Update(Jack *jack, const Platform platforms[MAX_PLATFORMS],
     }
     if (!landed) jack->onGround = false;
 
-    /* ---------- Chasm death: fell below the world ----------
-     * Instant death — ALL remaining lives are lost at once.
-     * The player is flung up and away in a random direction;
-     * from this moment they cannot move, shoot, take hits, or
-     * be targeted. Purely cosmetic — the game plays the death
-     * animation and removes them once they leave the screen or
-     * the timer expires. The fling is guaranteed to finish
-     * before the level-fail overlay triggers (both players must
-     * reach GONE, which only happens after the fling completes). */
+    /* ---------- Chasm death ---------- */
     float killY = (float)worldH + 40.0f;
     if (jack->position.y > killY) {
         jack->lives = 0;

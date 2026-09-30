@@ -11,7 +11,7 @@
 
 typedef struct LvlEnemy {
     int  platformIdx;
-    bool shooter;
+    int  type;        /* EnemyType */
 } LvlEnemy;
 
 typedef struct LevelDef {
@@ -41,7 +41,7 @@ static const LevelDef LEVELS[MAX_LEVELS] = {
       { 440, 280, 120, 24 },
       { 640, 280, 120, 24 },
   },
-  1, { {3,false} } },
+  1, { {3,ENEMY_WALKER} } },
 
 { "Stepping Stones", 900, 500, {80,400}, {140,400}, {0,0,0,0},
  10, {
@@ -56,7 +56,7 @@ static const LevelDef LEVELS[MAX_LEVELS] = {
       { 440, 280, 120, 24 },
       { 660, 280, 120, 24 },
   },
-  2, { {3,false}, {6,false} } },
+  2, { {3,ENEMY_WALKER}, {6,ENEMY_WALKER} } },
 
 { "Zigzag Cracks", 900, 500, {80,400}, {140,400}, {0,0,0,0},
  12, {
@@ -73,7 +73,7 @@ static const LevelDef LEVELS[MAX_LEVELS] = {
       { 600, 280, 120, 24 },
       { 400, 200, 120, 24 },
   },
-  3, { {4,false}, {6,true}, {11,false} } },
+  3, { {4,ENEMY_WALKER}, {6,ENEMY_SHOOTER}, {11,ENEMY_WALKER} } },
 
 { "Wide Gap", 900, 500, {80,400}, {140,400}, {0,0,0,0},
  11, {
@@ -89,7 +89,7 @@ static const LevelDef LEVELS[MAX_LEVELS] = {
       { 740, 360, 100, 24 },
       { 300, 200, 100, 24 },
   },
-  3, { {3,false}, {6,true}, {7,false} } },
+  3, { {3,ENEMY_WALKER}, {6,ENEMY_SHOOTER}, {7,ENEMY_WALKER} } },
 
 { "Watchtower", 900, 500, {80,400}, {140,400}, {0,0,0,0},
  14, {
@@ -108,7 +108,7 @@ static const LevelDef LEVELS[MAX_LEVELS] = {
       {  60, 360, 100, 24 },
       { 810, 360, 100, 24 },
   },
-  4, { {3,false}, {5,true}, {8,false}, {10,true} } },
+  4, { {3,ENEMY_WALKER}, {5,ENEMY_DASHER}, {8,ENEMY_SHOOTER}, {10,ENEMY_WALKER} } },
 
 /* ==================== Zone 2 — 1000 × 540 ==================== */
 
@@ -130,7 +130,8 @@ static const LevelDef LEVELS[MAX_LEVELS] = {
       { 680, 320, 110, 24 },
       { 820, 320, 110, 24 },
   },
-  5, { {3,false}, {5,true}, {8,false}, {10,false}, {13,true} } },
+  5, { {3,ENEMY_DASHER}, {5,ENEMY_SHOOTER}, {8,ENEMY_WALKER},
+       {10,ENEMY_DASHER}, {13,ENEMY_SHOOTER} } },
 
 { "Pillars of Ice", 1000, 540, {80,440}, {140,440}, {0,0,0,0},
  17, {
@@ -152,7 +153,8 @@ static const LevelDef LEVELS[MAX_LEVELS] = {
       { 700, 240, 100, 24 },
       { 440, 160, 120, 24 },
   },
-  6, { {1,false}, {2,true}, {4,false}, {7,false}, {10,true}, {12,false} } },
+  6, { {1,ENEMY_WALKER}, {2,ENEMY_SHOOTER}, {4,ENEMY_UNSTUNNABLE},
+       {7,ENEMY_DASHER}, {10,ENEMY_SHOOTER}, {12,ENEMY_WALKER} } },
 
 { "Grand Canyon", 1000, 540, {80,440}, {140,440}, {0,0,0,0},
  16, {
@@ -173,7 +175,8 @@ static const LevelDef LEVELS[MAX_LEVELS] = {
       { 520, 320, 100, 24 },
       { 660, 320, 100, 24 },
   },
-  6, { {1,false}, {3,true}, {6,false}, {9,true}, {11,false}, {14,false} } },
+  6, { {1,ENEMY_DASHER}, {3,ENEMY_SHOOTER}, {6,ENEMY_UNSTUNNABLE},
+       {9,ENEMY_DASHER}, {11,ENEMY_SHOOTER}, {14,ENEMY_WALKER} } },
 
 { "Frozen Falls", 1000, 540, {80,440}, {140,440}, {0,0,0,0},
  18, {
@@ -196,7 +199,8 @@ static const LevelDef LEVELS[MAX_LEVELS] = {
       { 500, 240, 180, 24 },
       { 760, 240, 180, 24 },
   },
-  7, { {3,false}, {4,true}, {6,false}, {8,true}, {10,false}, {12,true}, {16,false} } },
+  7, { {3,ENEMY_DASHER}, {4,ENEMY_SHOOTER}, {6,ENEMY_UNSTUNNABLE},
+       {8,ENEMY_DASHER}, {10,ENEMY_SHOOTER}, {12,ENEMY_WALKER}, {16,ENEMY_DASHER} } },
 
 { "Chasm", 1000, 540, {80,440}, {140,440}, {0,0,0,0},
  15, {
@@ -216,7 +220,9 @@ static const LevelDef LEVELS[MAX_LEVELS] = {
       { 200, 160, 200, 24 },
       { 560, 160, 200, 24 },
   },
-  9, { {3,false}, {4,true}, {5,false}, {6,true}, {7,false}, {9,true}, {11,false}, {13,true}, {14,false} } },
+  9, { {3,ENEMY_DASHER}, {4,ENEMY_SHOOTER}, {5,ENEMY_WALKER},
+       {6,ENEMY_DASHER}, {7,ENEMY_SHOOTER}, {9,ENEMY_UNSTUNNABLE},
+       {11,ENEMY_DASHER}, {13,ENEMY_SHOOTER}, {14,ENEMY_WALKER} } },
 
 /* ==================== Zone 3 — 1100 × 580 ==================== */
 
@@ -241,7 +247,9 @@ static const LevelDef LEVELS[MAX_LEVELS] = {
       { 820, 360, 100, 24 },
       { 960, 360, 100, 24 },
   },
-  8, { {4,false}, {6,true}, {8,false}, {10,true}, {12,false}, {14,true}, {16,false}, {17,true} } },
+  8, { {4,ENEMY_DASHER}, {6,ENEMY_FLYER}, {8,ENEMY_UNSTUNNABLE},
+       {10,ENEMY_DASHER}, {12,ENEMY_SHOOTER}, {14,ENEMY_FLYER},
+       {16,ENEMY_DASHER}, {17,ENEMY_SHOOTER} } },
 
 { "Triple Threat", 1100, 580, {80,480}, {140,480}, {0,0,0,0},
  19, {
@@ -265,7 +273,9 @@ static const LevelDef LEVELS[MAX_LEVELS] = {
       { 800, 360, 100, 24 },
       { 940, 360, 100, 24 },
   },
-  9, { {4,false}, {5,true}, {7,false}, {8,true}, {10,false}, {11,true}, {13,false}, {15,true}, {17,false} } },
+  9, { {4,ENEMY_DASHER}, {5,ENEMY_FLYER}, {7,ENEMY_UNSTUNNABLE},
+       {8,ENEMY_DASHER}, {10,ENEMY_SHOOTER}, {11,ENEMY_FLYER},
+       {13,ENEMY_DASHER}, {15,ENEMY_SHOOTER}, {17,ENEMY_UNSTUNNABLE} } },
 
 { "Labyrinth", 1100, 580, {80,480}, {140,480}, {0,0,0,0},
  21, {
@@ -291,7 +301,10 @@ static const LevelDef LEVELS[MAX_LEVELS] = {
       { 240, 280, 200, 24 },
       { 660, 280, 200, 24 },
   },
-  10, { {4,true}, {5,false}, {6,true}, {8,false}, {9,true}, {11,false}, {12,true}, {14,false}, {16,true}, {18,false} } },
+  10, { {4,ENEMY_FLYER}, {5,ENEMY_DASHER}, {6,ENEMY_UNSTUNNABLE},
+        {8,ENEMY_FLYER}, {9,ENEMY_DASHER}, {11,ENEMY_SHOOTER},
+        {12,ENEMY_FLYER}, {14,ENEMY_DASHER}, {16,ENEMY_UNSTUNNABLE},
+        {18,ENEMY_SHOOTER} } },
 
 { "Ice Cathedral", 1100, 580, {80,480}, {140,480}, {0,0,0,0},
  22, {
@@ -318,7 +331,10 @@ static const LevelDef LEVELS[MAX_LEVELS] = {
       { 700, 280, 120, 24 },
       { 400, 200, 300, 24 },
   },
-  11, { {4,true}, {5,false}, {6,true}, {7,false}, {9,true}, {10,false}, {12,true}, {14,false}, {16,true}, {18,false}, {21,true} } },
+  11, { {4,ENEMY_FLYER}, {5,ENEMY_DASHER}, {6,ENEMY_UNSTUNNABLE},
+        {7,ENEMY_FLYER}, {9,ENEMY_DASHER}, {10,ENEMY_SHOOTER},
+        {12,ENEMY_FLYER}, {14,ENEMY_DASHER}, {16,ENEMY_UNSTUNNABLE},
+        {18,ENEMY_SHOOTER}, {21,ENEMY_FLYER} } },
 
 { "Frozen Rapids", 1100, 580, {80,480}, {140,480}, {0,0,0,0},
  22, {
@@ -345,7 +361,10 @@ static const LevelDef LEVELS[MAX_LEVELS] = {
       { 640, 280, 140, 24 },
       { 860, 280, 140, 24 },
   },
-  12, { {4,true}, {5,false}, {6,true}, {7,false}, {8,true}, {9,false}, {10,true}, {12,false}, {14,true}, {16,false}, {18,true}, {20,false} } },
+  12, { {4,ENEMY_FLYER}, {5,ENEMY_DASHER}, {6,ENEMY_UNSTUNNABLE},
+        {7,ENEMY_FLYER}, {8,ENEMY_DASHER}, {9,ENEMY_SHOOTER},
+        {10,ENEMY_FLYER}, {12,ENEMY_DASHER}, {14,ENEMY_UNSTUNNABLE},
+        {16,ENEMY_FLYER}, {18,ENEMY_DASHER}, {20,ENEMY_SHOOTER} } },
 
 /* ==================== Zone 4 — 1200 × 620 ==================== */
 
@@ -376,7 +395,11 @@ static const LevelDef LEVELS[MAX_LEVELS] = {
       { 680, 320, 140, 24 },
       { 920, 320, 140, 24 },
   },
-  13, { {4,true}, {5,false}, {6,true}, {7,false}, {8,true}, {9,false}, {10,true}, {12,false}, {14,true}, {16,false}, {18,true}, {20,false}, {23,true} } },
+  13, { {4,ENEMY_FLYER}, {5,ENEMY_DASHER}, {6,ENEMY_UNSTUNNABLE},
+        {7,ENEMY_FLYER}, {8,ENEMY_DASHER}, {9,ENEMY_SHOOTER},
+        {10,ENEMY_FLYER}, {12,ENEMY_DASHER}, {14,ENEMY_UNSTUNNABLE},
+        {16,ENEMY_FLYER}, {18,ENEMY_DASHER}, {20,ENEMY_SHOOTER},
+        {23,ENEMY_FLYER} } },
 
 { "The Gauntlet", 1200, 620, {80,520}, {140,520}, {0,0,0,0},
  25, {
@@ -406,7 +429,11 @@ static const LevelDef LEVELS[MAX_LEVELS] = {
       { 640, 320, 120, 24 },
       { 880, 320, 120, 24 },
   },
-  14, { {5,true}, {6,false}, {7,true}, {8,false}, {9,true}, {10,false}, {11,true}, {12,false}, {13,true}, {15,false}, {17,true}, {19,false}, {21,true}, {23,false} } },
+  14, { {5,ENEMY_FLYER}, {6,ENEMY_DASHER}, {7,ENEMY_UNSTUNNABLE},
+        {8,ENEMY_FLYER}, {9,ENEMY_DASHER}, {10,ENEMY_SHOOTER},
+        {11,ENEMY_FLYER}, {12,ENEMY_DASHER}, {13,ENEMY_UNSTUNNABLE},
+        {15,ENEMY_FLYER}, {17,ENEMY_DASHER}, {19,ENEMY_SHOOTER},
+        {21,ENEMY_FLYER}, {23,ENEMY_DASHER} } },
 
 { "Glacial Divide", 1200, 620, {80,520}, {140,520}, {0,0,0,0},
  26, {
@@ -437,7 +464,11 @@ static const LevelDef LEVELS[MAX_LEVELS] = {
       { 340, 240, 140, 24 },
       { 660, 240, 140, 24 },
   },
-  15, { {4,true}, {5,false}, {6,true}, {7,false}, {8,true}, {9,false}, {10,true}, {12,false}, {14,true}, {16,false}, {18,true}, {20,false}, {22,true}, {24,false}, {25,true} } },
+  15, { {4,ENEMY_FLYER}, {5,ENEMY_DASHER}, {6,ENEMY_UNSTUNNABLE},
+        {7,ENEMY_FLYER}, {8,ENEMY_DASHER}, {9,ENEMY_SHOOTER},
+        {10,ENEMY_FLYER}, {12,ENEMY_DASHER}, {14,ENEMY_UNSTUNNABLE},
+        {16,ENEMY_FLYER}, {18,ENEMY_DASHER}, {20,ENEMY_SHOOTER},
+        {22,ENEMY_FLYER}, {24,ENEMY_UNSTUNNABLE}, {25,ENEMY_DASHER} } },
 
 { "Frozen Labyrinth", 1200, 620, {80,520}, {140,520}, {0,0,0,0},
  27, {
@@ -469,7 +500,12 @@ static const LevelDef LEVELS[MAX_LEVELS] = {
       { 720, 320, 100, 24 },
       { 860, 320, 100, 24 },
   },
-  16, { {4,true}, {5,false}, {6,true}, {7,false}, {8,true}, {9,false}, {10,true}, {12,false}, {13,true}, {15,false}, {16,true}, {18,false}, {19,true}, {21,false}, {23,true}, {25,false} } },
+  16, { {4,ENEMY_FLYER}, {5,ENEMY_DASHER}, {6,ENEMY_UNSTUNNABLE},
+        {7,ENEMY_FLYER}, {8,ENEMY_DASHER}, {9,ENEMY_SHOOTER},
+        {10,ENEMY_FLYER}, {12,ENEMY_DASHER}, {13,ENEMY_UNSTUNNABLE},
+        {15,ENEMY_FLYER}, {16,ENEMY_DASHER}, {18,ENEMY_SHOOTER},
+        {19,ENEMY_FLYER}, {21,ENEMY_DASHER}, {23,ENEMY_UNSTUNNABLE},
+        {25,ENEMY_FLYER} } },
 
 { "Absolute Zero", 1200, 620, {80,520}, {140,520}, {0,0,0,0},
  28, {
@@ -502,7 +538,12 @@ static const LevelDef LEVELS[MAX_LEVELS] = {
       { 460, 320, 110, 24 },
       { 660, 320, 110, 24 },
   },
-  18, { {4,true}, {5,false}, {6,true}, {7,false}, {8,true}, {9,false}, {10,true}, {11,false}, {12,true}, {13,false}, {14,true}, {16,false}, {18,true}, {20,false}, {22,true}, {24,false}, {25,true}, {27,false} } },
+  18, { {4,ENEMY_FLYER}, {5,ENEMY_DASHER}, {6,ENEMY_UNSTUNNABLE},
+        {7,ENEMY_FLYER}, {8,ENEMY_DASHER}, {9,ENEMY_SHOOTER},
+        {10,ENEMY_FLYER}, {11,ENEMY_DASHER}, {12,ENEMY_UNSTUNNABLE},
+        {13,ENEMY_FLYER}, {14,ENEMY_DASHER}, {16,ENEMY_SHOOTER},
+        {18,ENEMY_FLYER}, {20,ENEMY_DASHER}, {22,ENEMY_UNSTUNNABLE},
+        {24,ENEMY_FLYER}, {25,ENEMY_DASHER}, {27,ENEMY_SHOOTER} } },
 };
 
 /* ============================================================
@@ -526,7 +567,6 @@ static void LoadProgress(Game *game) {
     unsigned char *data = LoadFileData(SAVE_FILE, &size);
 
     if (!data) {
-        /* First run — no save file yet. Start with everything locked. */
         TraceLog(LOG_INFO, "No save file found — starting fresh.");
         return;
     }
@@ -1106,10 +1146,24 @@ static void SpawnEnemiesForLevel(Game *game, const LevelDef *L) {
         if (idx < 0 || idx >= L->nPlatforms) continue;
 
         Rectangle plat = L->platforms[idx];
-        if (L->enemies[e].shooter) {
-            Enemy_SpawnShooterOnPlatform(game->enemies, plat);
-        } else {
-            Enemy_SpawnOnPlatform(game->enemies, plat);
+
+        switch (L->enemies[e].type) {
+            case ENEMY_SHOOTER:
+                Enemy_SpawnShooterOnPlatform(game->enemies, plat);
+                break;
+            case ENEMY_DASHER:
+                Enemy_SpawnDasherOnPlatform(game->enemies, plat);
+                break;
+            case ENEMY_FLYER:
+                Enemy_SpawnFlyer(game->enemies, plat);
+                break;
+            case ENEMY_UNSTUNNABLE:
+                Enemy_SpawnUnstunnableOnPlatform(game->enemies, plat);
+                break;
+            case ENEMY_WALKER:
+            default:
+                Enemy_SpawnOnPlatform(game->enemies, plat);
+                break;
         }
     }
 }
@@ -1344,7 +1398,7 @@ void Game_Update(Game *game) {
         game->levelTimer = 0.0f;
         if (!game->levelCompleted[game->currentLevel]) {
             game->levelCompleted[game->currentLevel] = true;
-            SaveProgress(game);        /* persist immediately */
+            SaveProgress(game);
         }
         game->levelCompleteTimer = 1.5f;
     }
@@ -1390,8 +1444,8 @@ void Game_Run(Game *game) {
     LoadBackground(game);
     PlayerSprites_Load(&game->sprites);
 
-    Game_Init(game);          /* zeroes levelCompleted */
-    LoadProgress(game);       /* then loads save.dat if it exists */
+    Game_Init(game);
+    LoadProgress(game);
 
     while (!WindowShouldClose() && !game->quitRequested) {
         switch (game->state) {
@@ -1426,7 +1480,6 @@ void Game_Run(Game *game) {
         EndDrawing();
     }
 
-    /* Persist progress one last time before shutting down. */
     SaveProgress(game);
 
     PlayerSprites_Unload(&game->sprites);
