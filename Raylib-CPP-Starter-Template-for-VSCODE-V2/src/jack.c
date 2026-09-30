@@ -31,6 +31,22 @@ static inline float AnimDuration(JackAnim a) {
 }
 
 /* ============================================================
+ *  Fling helper — random direction, upward-biased
+ * ============================================================ */
+
+static void Jack_ApplyRandomFling(Jack *jack, float minPop, float maxPop)
+{
+    /* Guarantee horizontal motion — pick a side, then a magnitude */
+    float side = (GetRandomValue(0, 1) == 0) ? -1.0f : 1.0f;
+    float mag  = (float)GetRandomValue(8, 14);
+
+    jack->velocityX = side * mag;
+    jack->velocityY = -(float)GetRandomValue((int)minPop, (int)maxPop);
+    jack->onGround  = false;
+    jack->animTimer = 0.0f;
+}
+
+/* ============================================================
  *  Sprite loading
  * ============================================================ */
 
@@ -72,7 +88,9 @@ void PlayerSprites_Unload(PlayerSprites *sprites) {
  * ============================================================ */
 
 void Jack_Init(Jack *jack, Vector2 startPos, Color tintColor) {
-    jack->position  = startPos;
+    jack->position      = startPos;
+    jack->spawnPosition = startPos;
+
     jack->radiusX   = 22.0f;
     jack->radiusY   = 28.0f;
 
@@ -115,10 +133,9 @@ void Jack_Hit(Jack *jack) {
     jack->invulnTimer = JACK_INVULN_TIME;
 
     if (jack->lives <= 0) {
-        jack->state     = JACK_STATE_FLUNG;
-        jack->velocityX = -jack->facingDir * 9.0f;
-        jack->velocityY = -11.0f;
-        jack->onGround  = false;
+        /* Last life — fling in a random direction */
+        jack->state = JACK_STATE_FLUNG;
+        Jack_ApplyRandomFling(jack, 16.0f, 22.0f);
     }
 }
 
@@ -145,27 +162,29 @@ static inline float Jack_Bottom(const Jack *j) {
 }
 
 void Jack_Update(Jack *jack, const Platform platforms[MAX_PLATFORMS],
-                 const JackControls *controls)
+                 const JackControls *controls,
+                 int worldW, int worldH)
 {
     float dt = GetFrameTime();
-
-    /* Save position at the top of the frame so the horizontal
-     * collision pass can check "was the player already inside the
-     * platform's column on the previous frame?". */
     Vector2 prevPosition = jack->position;
 
     /* ============================================================
-     *  Flung off-screen — fly, then disappear
+     *  FLUNG — pure death animation, not part of gameplay
      * ============================================================ */
     if (jack->state == JACK_STATE_FLUNG) {
         jack->velocityY += jack->gravity;
         jack->position.x += jack->velocityX;
         jack->position.y += jack->velocityY;
-        jack->animTimer += dt;
+        jack->animTimer  += dt;
 
+        /* Leave gameplay when off-screen OR after a hard timeout.
+         * The timeout guarantees we never linger even on huge
+         * levels or if the fling arc happens to stay in-bounds. */
         if (jack->position.x < -150.0f ||
-            jack->position.x > GetScreenWidth() + 150.0f ||
-            jack->position.y < -300.0f)
+            jack->position.x > worldW + 150.0f ||
+            jack->position.y < -300.0f          ||
+            jack->position.y > worldH + 300.0f  ||
+            jack->animTimer > 1.5f)
         {
             jack->state = JACK_STATE_GONE;
         }
@@ -191,23 +210,7 @@ void Jack_Update(Jack *jack, const Platform platforms[MAX_PLATFORMS],
         moving = true;
     }
 
-    /* ------------------------------------------------------------
-     *  Horizontal platform collision
-     *
-     *  Runs EVERY frame (no longer gated on velocityY). The push is
-     *  skipped in two cases:
-     *
-     *    1. Standing on top of the platform (feet at/above top + 6).
-     *    2. The player was ALREADY inside the platform's column on
-     *       the previous frame — meaning they are legitimately
-     *       passing through from below / standing inside / rising
-     *       through, and must not be shoved sideways.
-     *
-     *  When the player ENTERS the column from the side (previous
-     *  frame's X did not overlap), the push fires immediately so
-     *  they cannot drift into the platform during a jump. This is
-     *  what prevents the "clipped onto the platform" bug.
-     * ------------------------------------------------------------ */
+    /* Horizontal platform collision */
     for (int i = 0; i < MAX_PLATFORMS; i++) {
         if (!platforms[i].active) continue;
         Rectangle p = platforms[i].bounds;
@@ -219,17 +222,13 @@ void Jack_Update(Jack *jack, const Platform platforms[MAX_PLATFORMS],
             jack->radiusY * 2
         };
         if (!CheckCollisionRecs(jBox, p)) continue;
-
-        /* (1) Standing on top — no push */
         if (Jack_Bottom(jack) <= p.y + 6.0f) continue;
 
-        /* (2) Was already inside the column last frame — no push */
         bool wasOverlappingX =
             (prevPosition.x - jack->radiusX) < (p.x + p.width) &&
             (prevPosition.x + jack->radiusX) >  p.x;
         if (wasOverlappingX) continue;
 
-        /* Side collision — push out horizontally */
         float platCX = p.x + p.width * 0.5f;
         if (jack->position.x < platCX) {
             jack->position.x = p.x - jack->radiusX;
@@ -238,11 +237,11 @@ void Jack_Update(Jack *jack, const Platform platforms[MAX_PLATFORMS],
         }
     }
 
-    /* Screen X clamp */
+    /* World X clamp */
     if (jack->position.x < jack->radiusX)
         jack->position.x = jack->radiusX;
-    if (jack->position.x > GetScreenWidth() - jack->radiusX)
-        jack->position.x = GetScreenWidth() - jack->radiusX;
+    if (jack->position.x > worldW - jack->radiusX)
+        jack->position.x = worldW - jack->radiusX;
 
     /* Jump */
     if (IsKeyPressed(controls->keyJump) && jack->onGround) {
@@ -257,7 +256,7 @@ void Jack_Update(Jack *jack, const Platform platforms[MAX_PLATFORMS],
     jack->position.y += jack->velocityY;
     bool landed = false;
 
-    /* One-way platform landing */
+    /* One-way landing */
     if (jack->velocityY >= 0.0f) {
         Rectangle jackBox = {
             jack->position.x - jack->radiusX,
@@ -284,13 +283,24 @@ void Jack_Update(Jack *jack, const Platform platforms[MAX_PLATFORMS],
     }
     if (!landed) jack->onGround = false;
 
-    /* Screen floor & ceiling */
-    float screenFloor = GetScreenHeight() - jack->radiusY;
-    if (jack->position.y >= screenFloor) {
-        jack->position.y = screenFloor;
-        jack->velocityY  = 0.0f;
-        jack->onGround   = true;
+    /* ---------- Chasm death: fell below the world ----------
+     * Instant death — ALL remaining lives are lost at once.
+     * The player is flung up and away in a random direction;
+     * from this moment they cannot move, shoot, take hits, or
+     * be targeted. Purely cosmetic — the game plays the death
+     * animation and removes them once they leave the screen or
+     * the timer expires. The fling is guaranteed to finish
+     * before the level-fail overlay triggers (both players must
+     * reach GONE, which only happens after the fling completes). */
+    float killY = (float)worldH + 40.0f;
+    if (jack->position.y > killY) {
+        jack->lives = 0;
+        jack->state = JACK_STATE_FLUNG;
+        Jack_ApplyRandomFling(jack, 18.0f, 24.0f);
+        return;
     }
+
+    /* World ceiling */
     if (jack->position.y < jack->radiusY) {
         jack->position.y = jack->radiusY;
         if (jack->velocityY < 0) jack->velocityY = 0.0f;

@@ -25,8 +25,8 @@ typedef enum JackAnim {
 
 typedef enum JackState {
     JACK_STATE_ALIVE = 0,
-    JACK_STATE_FLUNG,   /* lost last life — flying off screen */
-    JACK_STATE_GONE     /* off screen, out of the game */
+    JACK_STATE_FLUNG,
+    JACK_STATE_GONE
 } JackState;
 
 typedef struct PlayerSprites {
@@ -38,10 +38,12 @@ typedef struct PlayerSprites {
 
 typedef struct Jack {
     Vector2 position;
+    Vector2 spawnPosition;   
+
     float   radiusX;
     float   radiusY;
 
-    float   velocityX;   /* only used during FLUNG */
+    float   velocityX;
     float   velocityY;
     float   moveSpeed;
     float   jumpForce;
@@ -65,13 +67,14 @@ void PlayerSprites_Unload(PlayerSprites *sprites);
 
 void Jack_Init  (Jack *jack, Vector2 startPos, Color tintColor);
 void Jack_Update(Jack *jack, const Platform platforms[MAX_PLATFORMS],
-                 const JackControls *controls);
+                 const JackControls *controls,
+                 int worldW, int worldH);     /* NEW — level bounds instead of screen */
 void Jack_Draw  (const Jack *jack, const PlayerSprites *sprites);
 
 void Jack_TriggerShoot(Jack *jack);
 void Jack_Hit         (Jack *jack);
-bool Jack_IsPlayable  (const Jack *jack);   /* alive → can move/shoot */
-bool Jack_IsVulnerable(const Jack *jack);   /* enemies can hurt them  */
-bool Jack_IsInvulnerable(const Jack *jack); /* should blink           */
+bool Jack_IsPlayable  (const Jack *jack);
+bool Jack_IsVulnerable(const Jack *jack);
+bool Jack_IsInvulnerable(const Jack *jack);
 
 #endif /* JACK_H */
