@@ -115,7 +115,6 @@ void Jack_Hit(Jack *jack) {
     jack->invulnTimer = JACK_INVULN_TIME;
 
     if (jack->lives <= 0) {
-        /* Last life — fling them off the screen */
         jack->state     = JACK_STATE_FLUNG;
         jack->velocityX = -jack->facingDir * 9.0f;
         jack->velocityY = -11.0f;
@@ -149,6 +148,11 @@ void Jack_Update(Jack *jack, const Platform platforms[MAX_PLATFORMS],
                  const JackControls *controls)
 {
     float dt = GetFrameTime();
+
+    /* Save position at the top of the frame so the horizontal
+     * collision pass can check "was the player already inside the
+     * platform's column on the previous frame?". */
+    Vector2 prevPosition = jack->position;
 
     /* ============================================================
      *  Flung off-screen — fly, then disappear
@@ -187,27 +191,50 @@ void Jack_Update(Jack *jack, const Platform platforms[MAX_PLATFORMS],
         moving = true;
     }
 
-    /* Horizontal platform collision */
-    if (jack->velocityY >= 0.0f) {
-        for (int i = 0; i < MAX_PLATFORMS; i++) {
-            if (!platforms[i].active) continue;
-            Rectangle p = platforms[i].bounds;
+    /* ------------------------------------------------------------
+     *  Horizontal platform collision
+     *
+     *  Runs EVERY frame (no longer gated on velocityY). The push is
+     *  skipped in two cases:
+     *
+     *    1. Standing on top of the platform (feet at/above top + 6).
+     *    2. The player was ALREADY inside the platform's column on
+     *       the previous frame — meaning they are legitimately
+     *       passing through from below / standing inside / rising
+     *       through, and must not be shoved sideways.
+     *
+     *  When the player ENTERS the column from the side (previous
+     *  frame's X did not overlap), the push fires immediately so
+     *  they cannot drift into the platform during a jump. This is
+     *  what prevents the "clipped onto the platform" bug.
+     * ------------------------------------------------------------ */
+    for (int i = 0; i < MAX_PLATFORMS; i++) {
+        if (!platforms[i].active) continue;
+        Rectangle p = platforms[i].bounds;
 
-            Rectangle jBox = {
-                jack->position.x - jack->radiusX,
-                jack->position.y - jack->radiusY,
-                jack->radiusX * 2,
-                jack->radiusY * 2
-            };
-            if (!CheckCollisionRecs(jBox, p)) continue;
-            if (Jack_Bottom(jack) <= p.y + 6.0f) continue;
+        Rectangle jBox = {
+            jack->position.x - jack->radiusX,
+            jack->position.y - jack->radiusY,
+            jack->radiusX * 2,
+            jack->radiusY * 2
+        };
+        if (!CheckCollisionRecs(jBox, p)) continue;
 
-            float platCX = p.x + p.width * 0.5f;
-            if (jack->position.x < platCX) {
-                jack->position.x = p.x - jack->radiusX;
-            } else {
-                jack->position.x = p.x + p.width + jack->radiusX;
-            }
+        /* (1) Standing on top — no push */
+        if (Jack_Bottom(jack) <= p.y + 6.0f) continue;
+
+        /* (2) Was already inside the column last frame — no push */
+        bool wasOverlappingX =
+            (prevPosition.x - jack->radiusX) < (p.x + p.width) &&
+            (prevPosition.x + jack->radiusX) >  p.x;
+        if (wasOverlappingX) continue;
+
+        /* Side collision — push out horizontally */
+        float platCX = p.x + p.width * 0.5f;
+        if (jack->position.x < platCX) {
+            jack->position.x = p.x - jack->radiusX;
+        } else {
+            jack->position.x = p.x + p.width + jack->radiusX;
         }
     }
 
