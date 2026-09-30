@@ -511,6 +511,8 @@ void Game_Init(Game *game) {
     Shard_InitAll(game->shards);
     Enemy_InitAll(game->enemies);
     EnemyProjectile_InitAll(game->enemyProjectiles);
+    Frozen_Init(&game->frozen);
+    Particle_InitAll(&game->particles);
 
     BuildLevel(game);
     SpawnAllEnemies(game);
@@ -530,6 +532,28 @@ void Game_Update(Game *game) {
 
     Jack_Update(&game->players[0], game->platforms, game->ladders, &P1_CONTROLS);
     Jack_Update(&game->players[1], game->platforms, game->ladders, &P2_CONTROLS);
+
+/* ----- Freeze the world under / around each living player ----- */
+float radiusPx = FROZEN_RADIUS_TILES * FROZEN_TILE_SIZE;
+
+for (int p = 0; p < PLAYER_COUNT; p++) {
+    Jack *j = &game->players[p];
+    if (j->state != JACK_STATE_ALIVE) continue;
+
+    /* Freeze circle around the player's feet. */
+    Vector2 feet = { j->position.x, j->position.y + j->radiusY };
+    Frozen_FreezeCircle(&game->frozen, feet, radiusPx);
+
+    /* Spawn icy particles when moving horizontally on ground or climbing. */
+    bool moving = IsKeyDown(
+        p == 0 ? KEY_A : KEY_LEFT) || IsKeyDown(p == 0 ? KEY_D : KEY_RIGHT);
+
+    if (moving || j->climbing) {
+        Particle_SpawnIcy(&game->particles, feet, 30.0f);
+    }
+}
+
+Particle_UpdateAll(&game->particles, GetFrameTime());
 
     Shard_UpdateAll(game->shards, SCREEN_WIDTH);
     ResolveShardPlatformCollisions(game);
@@ -592,8 +616,8 @@ void Game_Draw(const Game *game) {
             break;
 
         case GAME_STATE_PLAYING:
-            Platform_DrawAll(game->platforms);
-            Ladder_DrawAll(game->ladders);
+            Platform_DrawAll(game->platforms, &game->frozen);
+            Ladder_DrawAll(game->ladders, &game->frozen);
             Shard_DrawAll(game->shards);
             Enemy_DrawAll(game->enemies);
             EnemyProjectile_DrawAll(game->enemyProjectiles);

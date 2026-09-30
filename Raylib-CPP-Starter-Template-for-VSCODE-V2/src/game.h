@@ -7,6 +7,8 @@
 #include "shard.h"
 #include "enemy.h"
 #include "platform.h"
+#include "frozen.h"
+#include "particle.h"
 
 #define SCREEN_WIDTH   800
 #define SCREEN_HEIGHT  500
@@ -33,6 +35,8 @@ typedef struct Game {
     Ladder    ladders[MAX_LADDERS];
     PlayerSprites   sprites;      /* shared between both players */
     Texture2D       background;
+    FrozenMap      frozen;
+    ParticleSystem particles;
     int       score;
     bool      active;          /* false while playing = game over */
     float     frameCounter;
