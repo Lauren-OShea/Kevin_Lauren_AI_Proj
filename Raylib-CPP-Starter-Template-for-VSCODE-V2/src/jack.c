@@ -2,7 +2,7 @@
 #include <math.h>
 
 void Jack_Init(Jack *jack) {
-    jack->position = (Vector2){ 130, GetScreenHeight() / 2.0f };
+    jack->position = (Vector2){ 130, 400 };
     jack->radiusX = 22.0f;
     jack->radiusY = 28.0f;
     jack->bobPhase = 0.0f;

@@ -14,14 +14,24 @@
 #define GAME_TITLE    "Jack Frost - Raylib"
 #define TARGET_FPS    60
 
+typedef enum GameState {
+    GAME_STATE_MENU = 0,
+    GAME_STATE_CONTROLS,
+    GAME_STATE_PLAYING
+} GameState;
+
 typedef struct Game {
-    Jack     jack;
-    Shard    shards[MAX_SHARDS];
-    Enemy    enemies[MAX_ENEMIES];
-    Platform platforms[MAX_PLATFORMS];
-    int      score;
-    bool     active;
-    float    frameCounter;
+    Jack      jack;
+    Shard     shards[MAX_SHARDS];
+    Enemy     enemies[MAX_ENEMIES];
+    Platform  platforms[MAX_PLATFORMS];
+    int       score;
+    bool      active;          /* false while playing = game over */
+    float     frameCounter;
+
+    GameState state;           /* which screen we're on */
+    int       menuSelection;   /* highlighted menu item */
+    bool      quitRequested;   /* set by the Quit menu item */
 } Game;
 
 void Game_Init(Game *game);

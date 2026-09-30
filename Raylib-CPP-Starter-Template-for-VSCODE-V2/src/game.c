@@ -91,6 +91,7 @@ static void DrawHUD(const Game *game) {
 
         const char *over    = "GAME OVER";
         const char *restart = "Press R to Restart";
+        const char *menu    = "Press M for Menu";
 
         DrawText(over,
                  SCREEN_WIDTH / 2 - MeasureText(over, 60) / 2,
@@ -101,7 +102,169 @@ static void DrawHUD(const Game *game) {
                  SCREEN_WIDTH / 2 - MeasureText(restart, 30) / 2,
                  SCREEN_HEIGHT / 2 + 20, 30,
                  (Color){ 200, 220, 240, 255 });
+
+        DrawText(menu,
+                 SCREEN_WIDTH / 2 - MeasureText(menu, 30) / 2,
+                 SCREEN_HEIGHT / 2 + 60, 30,
+                 (Color){ 200, 220, 240, 255 });
     }
+}
+
+/* ============================================================
+ *  Menu
+ * ============================================================ */
+
+typedef enum MenuItem {
+    MENU_PLAY = 0,
+    MENU_CONTROLS,
+    MENU_QUIT,
+    MENU_COUNT
+} MenuItem;
+
+static const char *MENU_LABELS[MENU_COUNT] = { "PLAY", "CONTROLS", "QUIT" };
+
+#define MENU_ITEM_W       240
+#define MENU_ITEM_H       44
+#define MENU_ITEM_SPACING 58
+#define MENU_FIRST_Y      250
+
+static Rectangle MenuItemRect(int i) {
+    return (Rectangle){
+        (float)(SCREEN_WIDTH / 2 - MENU_ITEM_W / 2),
+        (float)(MENU_FIRST_Y + i * MENU_ITEM_SPACING),
+        (float)MENU_ITEM_W,
+        (float)MENU_ITEM_H
+    };
+}
+
+static void UpdateMenu(Game *game) {
+    /* Keyboard navigation */
+    if (IsKeyPressed(KEY_DOWN) || IsKeyPressed(KEY_S)) {
+        game->menuSelection = (game->menuSelection + 1) % MENU_COUNT;
+    }
+    if (IsKeyPressed(KEY_UP) || IsKeyPressed(KEY_W)) {
+        game->menuSelection = (game->menuSelection + MENU_COUNT - 1) % MENU_COUNT;
+    }
+
+    /* Mouse hover (only when the mouse actually moves, so it doesn't
+       fight with keyboard navigation) */
+    Vector2 mouse   = GetMousePosition();
+    Vector2 delta   = GetMouseDelta();
+    bool    moved   = (delta.x != 0.0f || delta.y != 0.0f);
+    bool    hovered = false;
+
+    for (int i = 0; i < MENU_COUNT; i++) {
+        if (CheckCollisionPointRec(mouse, MenuItemRect(i))) {
+            if (moved) game->menuSelection = i;
+            if (game->menuSelection == i) hovered = true;
+        }
+    }
+
+    bool activate = IsKeyPressed(KEY_ENTER) || IsKeyPressed(KEY_SPACE) ||
+                    (hovered && IsMouseButtonPressed(MOUSE_BUTTON_LEFT));
+
+    if (!activate) return;
+
+    switch (game->menuSelection) {
+        case MENU_PLAY:
+            Game_Init(game);                 /* fresh run, sets state to PLAYING */
+            break;
+        case MENU_CONTROLS:
+            game->state = GAME_STATE_CONTROLS;
+            break;
+        case MENU_QUIT:
+            game->quitRequested = true;
+            break;
+    }
+}
+
+static void DrawMenu(const Game *game) {
+    float t = (float)GetTime();
+
+    DrawRectangle(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT, (Color){ 0, 0, 0, 90 });
+
+    /* Title with a gentle bob */
+    const char *title    = "JACK FROST";
+    const char *subtitle = "Freeze them all";
+    int   titleSize = 72;
+    float bob       = sinf(t * 2.0f) * 4.0f;
+    int   titleX    = SCREEN_WIDTH / 2 - MeasureText(title, titleSize) / 2;
+    int   titleY    = 90 + (int)bob;
+
+    DrawText(title, titleX + 3, titleY + 3, titleSize, (Color){ 20, 50, 90, 200 });
+    DrawText(title, titleX,     titleY,     titleSize, (Color){ 232, 245, 255, 255 });
+
+    DrawText(subtitle,
+             SCREEN_WIDTH / 2 - MeasureText(subtitle, 22) / 2,
+             titleY + titleSize + 6, 22, (Color){ 170, 210, 240, 255 });
+
+    /* Buttons */
+    for (int i = 0; i < MENU_COUNT; i++) {
+        Rectangle r        = MenuItemRect(i);
+        bool      selected = (game->menuSelection == i);
+
+        Color fill   = selected ? (Color){ 120, 190, 240, 230 }
+                                : (Color){ 20, 40, 70, 170 };
+        Color border = selected ? (Color){ 255, 255, 255, 255 }
+                                : (Color){ 130, 170, 210, 200 };
+        Color text   = selected ? (Color){ 10, 30, 60, 255 }
+                                : (Color){ 232, 245, 255, 255 };
+
+        DrawRectangleRec(r, fill);
+        DrawRectangleLinesEx(r, 2.0f, border);
+
+        int fontSize = 26;
+        DrawText(MENU_LABELS[i],
+                 (int)(r.x + r.width / 2) - MeasureText(MENU_LABELS[i], fontSize) / 2,
+                 (int)(r.y + (r.height - fontSize) / 2),
+                 fontSize, text);
+    }
+
+    const char *hint = "Arrows / W,S to move  -  Enter to select";
+    DrawText(hint,
+             SCREEN_WIDTH / 2 - MeasureText(hint, 16) / 2,
+             SCREEN_HEIGHT - 30, 16, (Color){ 200, 220, 240, 200 });
+}
+
+/* ============================================================
+ *  Controls screen
+ * ============================================================ */
+
+static void UpdateControls(Game *game) {
+    if (IsKeyPressed(KEY_ESCAPE) || IsKeyPressed(KEY_ENTER) ||
+        IsKeyPressed(KEY_SPACE)  || IsKeyPressed(KEY_BACKSPACE) ||
+        IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
+        game->state = GAME_STATE_MENU;
+    }
+}
+
+static void DrawControls(void) {
+    DrawRectangle(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT, (Color){ 0, 0, 0, 150 });
+
+    const char *title = "CONTROLS";
+    DrawText(title,
+             SCREEN_WIDTH / 2 - MeasureText(title, 48) / 2,
+             70, 48, (Color){ 232, 245, 255, 255 });
+
+    /* TODO: adjust these to match the keys used in Jack_Update() */
+    const char *lines[] = {
+        "Move:   A / D  or  Left / Right",
+        "Jump:   W / Space  or  Up",
+        "Shoot:  Left Mouse Button",
+        "Stun enemies with shards - don't touch them!"
+    };
+    int count = (int)(sizeof(lines) / sizeof(lines[0]));
+
+    for (int i = 0; i < count; i++) {
+        DrawText(lines[i],
+                 SCREEN_WIDTH / 2 - MeasureText(lines[i], 24) / 2,
+                 170 + i * 44, 24, (Color){ 200, 225, 245, 255 });
+    }
+
+    const char *back = "Press Esc or click to go back";
+    DrawText(back,
+             SCREEN_WIDTH / 2 - MeasureText(back, 18) / 2,
+             SCREEN_HEIGHT - 50, 18, (Color){ 170, 210, 240, 220 });
 }
 
 /* ============================================================
@@ -121,12 +284,12 @@ static void BuildLevel(Game *game) {
 }
 
 /* ============================================================
- *  Enemy placement — all enemies spawn once at level start
+ *  Enemy placement - all enemies spawn once at level start
  * ============================================================ */
 
 static void SpawnAllEnemies(Game *game) {
-    // Skip the ground floor (index 0) so enemies start on raised platforms.
-    // One enemy per platform from index 1 onward.
+    /* Skip the ground floor (index 0) so enemies start on raised platforms.
+       One enemy per platform from index 1 onward. */
     for (int i = 1; i < MAX_PLATFORMS; i++) {
         if (!game->platforms[i].active) continue;
         Enemy_SpawnOnPlatform(game->enemies, game->platforms[i].bounds);
@@ -198,11 +361,11 @@ static void ResolveShardEnemyCollisions(Game *game) {
 
             Rectangle er = Enemy_GetRect(&game->enemies[j]);
             if (CheckCollisionCircleRec(game->shards[i].position, SHARD_RADIUS, er)) {
-                // Consume the shard; stun (do NOT kill) the enemy
+                /* Consume the shard; stun (do NOT kill) the enemy */
                 game->shards[i].active = false;
 
                 if (Enemy_Stun(&game->enemies[j])) {
-                    game->score += 10;   // reward still given on stun
+                    game->score += 10;   /* reward still given on stun */
                 }
                 break;
             }
@@ -225,6 +388,7 @@ void Game_Init(Game *game) {
     game->score        = 0;
     game->active       = true;
     game->frameCounter = 0.0f;
+    game->state        = GAME_STATE_PLAYING;
 }
 
 void Game_Restart(Game *game) {
@@ -234,7 +398,7 @@ void Game_Restart(Game *game) {
 void Game_Update(Game *game) {
     if (!game->active) return;
 
-    // 1. Player
+    /* 1. Player */
     Jack_Update(&game->jack, game->platforms);
     ResolveJackPlatformCollisions(game);
 
@@ -262,11 +426,24 @@ void Game_Update(Game *game) {
 
 void Game_Draw(const Game *game) {
     DrawBackground();
-    Platform_DrawAll(game->platforms);
-    Shard_DrawAll(game->shards);
-    Enemy_DrawAll(game->enemies);
-    Jack_Draw(&game->jack);
-    DrawHUD(game);
+
+    switch (game->state) {
+        case GAME_STATE_MENU:
+            DrawMenu(game);
+            break;
+
+        case GAME_STATE_CONTROLS:
+            DrawControls();
+            break;
+
+        case GAME_STATE_PLAYING:
+            Platform_DrawAll(game->platforms);
+            Shard_DrawAll(game->shards);
+            Enemy_DrawAll(game->enemies);
+            Jack_Draw(&game->jack);
+            DrawHUD(game);
+            break;
+    }
 }
 
 /* ============================================================
@@ -277,14 +454,38 @@ void Game_Run(Game *game) {
     InitWindow(SCREEN_WIDTH, SCREEN_HEIGHT, GAME_TITLE);
     SetTargetFPS(TARGET_FPS);
 
+    /* Esc is used to go back to the menu, so don't let it close the window */
+    SetExitKey(KEY_NULL);
+
     LoadBackgroundAsset();
     Game_Init(game);
 
-    while (!WindowShouldClose()) {
-        if (game->active) {
-            Game_Update(game);
-        } else if (IsKeyPressed(KEY_R)) {
-            Game_Restart(game);
+    /* Start on the menu instead of jumping straight into play */
+    game->state         = GAME_STATE_MENU;
+    game->menuSelection = MENU_PLAY;
+    game->quitRequested = false;
+
+    while (!WindowShouldClose() && !game->quitRequested) {
+        switch (game->state) {
+            case GAME_STATE_MENU:
+                UpdateMenu(game);
+                break;
+
+            case GAME_STATE_CONTROLS:
+                UpdateControls(game);
+                break;
+
+            case GAME_STATE_PLAYING:
+                if (IsKeyPressed(KEY_ESCAPE)) {
+                    game->state = GAME_STATE_MENU;
+                } else if (game->active) {
+                    Game_Update(game);
+                } else if (IsKeyPressed(KEY_R)) {
+                    Game_Restart(game);
+                } else if (IsKeyPressed(KEY_M)) {
+                    game->state = GAME_STATE_MENU;
+                }
+                break;
         }
 
         BeginDrawing();
