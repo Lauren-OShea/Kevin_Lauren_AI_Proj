@@ -81,10 +81,20 @@ void Frozen_DrawOverlayRect(const FrozenMap *map, Rectangle rect,
                 (float)FROZEN_TILE_SIZE,
                 (float)FROZEN_TILE_SIZE
             };
-            /* Clip to the platform/ladder rect so we don't draw
-               outside the body. */
             Rectangle clip = GetCollisionRec(cell, rect);
             DrawRectangleRec(clip, frostColor);
         }
     }
+}
+
+/* Check if 100% of the frozen map grid is filled. */
+bool Frozen_IsFull(const FrozenMap *map) {
+    for (int r = 0; r < FROZEN_ROWS; r++) {
+        for (int c = 0; c < FROZEN_COLS; c++) {
+            if (map->cells[r][c] == 0) {
+                return false;
+            }
+        }
+    }
+    return true;
 }

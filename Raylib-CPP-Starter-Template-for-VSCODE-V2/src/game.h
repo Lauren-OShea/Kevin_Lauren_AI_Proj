@@ -18,15 +18,12 @@
 #define PLAYER_COUNT   2
 #define MAX_LEVELS     20
 
-
 typedef enum GameState {
     GAME_STATE_MENU = 0,
     GAME_STATE_LEVEL_SELECT,
     GAME_STATE_CONTROLS,
     GAME_STATE_PLAYING
 } GameState;
-
-
 
 typedef struct Game {
     Jack            players[PLAYER_COUNT];
