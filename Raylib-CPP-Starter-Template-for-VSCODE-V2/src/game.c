@@ -1,6 +1,7 @@
 #include "game.h"
 #include <math.h>
 #include <string.h>
+#include <stdio.h>
 
 /* Forward declarations for static helpers defined later */
 static void BuildLadders(Game *game);
@@ -627,16 +628,12 @@ static bool MovingPlatformPlacementSafe(const Game *game, const LevelDef *L,
     if (swept.x + swept.width  > L->worldW - 10.0f) return false;
     if (swept.y + swept.height > L->worldH - 10.0f) return false;
 
-    /* Static platforms — small (8 px) buffer, so the moving platform
-     * can sit right next to / beside existing platforms without
-     * physically overlapping them at any point in its travel. */
     for (int i = 0; i < L->nPlatforms; i++) {
         Rectangle p  = L->platforms[i];
         Rectangle pe = { p.x - 8, p.y - 8, p.width + 16, p.height + 16 };
         if (CheckCollisionRecs(swept, pe)) return false;
     }
 
-    /* Other moving platforms — 12 px buffer around their swept boxes */
     for (int i = 0; i < MAX_MOVING_PLATFORMS; i++) {
         if (!game->movingPlatforms[i].active) continue;
         Rectangle s = MovingPlatform_GetSweptBox(&game->movingPlatforms[i]);
@@ -644,7 +641,6 @@ static bool MovingPlatformPlacementSafe(const Game *game, const LevelDef *L,
         if (CheckCollisionRecs(swept, s)) return false;
     }
 
-    /* Flying enemies — full patrol strip + 16 px buffer */
     for (int i = 0; i < MAX_ENEMIES; i++) {
         if (!game->enemies[i].active) continue;
         if (game->enemies[i].type != ENEMY_FLYER) continue;
@@ -659,7 +655,6 @@ static bool MovingPlatformPlacementSafe(const Game *game, const LevelDef *L,
         if (CheckCollisionRecs(swept, er)) return false;
     }
 
-    /* Jumppads & spikes */
     for (int i = 0; i < MAX_JUMPPADS; i++) {
         if (!game->jumppads[i].active) continue;
         if (CheckCollisionRecs(swept, game->jumppads[i].bounds)) return false;
@@ -678,14 +673,12 @@ static void PlaceMovingPlatformsRandomly(Game *game, const LevelDef *L,
     int placed = 0;
 
     for (int attempt = 0; attempt < 300 && placed < targetCount; attempt++) {
-        /* Smaller platforms */
         float w = (float)GetRandomValue(70, 100);
         float h = 16.0f;
 
         float x1 = (float)GetRandomValue(60, L->worldW - (int)w - 60);
         float y1 = (float)GetRandomValue(80, L->worldH - 200);
 
-        /* Short travel — axis 0 = horizontal, 1 = vertical, 2 = diagonal */
         int   axis = GetRandomValue(0, 2);
         float dx = 0, dy = 0;
 
@@ -713,8 +706,6 @@ static void PlaceMovingPlatformsRandomly(Game *game, const LevelDef *L,
 
         if (!MovingPlatformPlacementSafe(game, L, swept)) continue;
 
-        /* Slightly faster per-unit speed keeps the slower, shorter
-         * travel visually interesting without a huge footprint. */
         float speed = 0.25f + (float)GetRandomValue(0, 15) / 100.0f;
         if (MovingPlatform_Add(game->movingPlatforms, startRect, endRect, speed))
             placed++;
@@ -725,38 +716,35 @@ static void PlaceMovingPlatformsRandomly(Game *game, const LevelDef *L,
  *  Save / Load progress
  * ============================================================ */
 
-#define SAVE_FILE "save.dat"
-
 static void SaveProgress(const Game *game) {
-    unsigned char buf[MAX_LEVELS];
-    for (int i = 0; i < MAX_LEVELS; i++) {
+    unsigned char buf[MAX_TOTAL_LEVELS];
+    for (int i = 0; i < MAX_TOTAL_LEVELS; i++) {
         buf[i] = game->levelCompleted[i] ? 1 : 0;
     }
-    if (!SaveFileData(SAVE_FILE, buf, MAX_LEVELS)) {
-        TraceLog(LOG_WARNING, "Could not write %s", SAVE_FILE);
+    if (!SaveFileData("save.dat", buf, MAX_TOTAL_LEVELS)) {
+        TraceLog(LOG_WARNING, "Could not write save.dat");
     }
 }
 
 static void LoadProgress(Game *game) {
     int size = 0;
-    unsigned char *data = LoadFileData(SAVE_FILE, &size);
+    unsigned char *data = LoadFileData("save.dat", &size);
 
     if (!data) {
         TraceLog(LOG_INFO, "No save file found — starting fresh.");
         return;
     }
 
-    if (size == MAX_LEVELS) {
-        for (int i = 0; i < MAX_LEVELS; i++) {
+    if (size == MAX_TOTAL_LEVELS) {
+        for (int i = 0; i < MAX_TOTAL_LEVELS; i++) {
             game->levelCompleted[i] = (data[i] != 0);
         }
-        TraceLog(LOG_INFO, "Loaded %s — progress restored.", SAVE_FILE);
+        TraceLog(LOG_INFO, "Progress loaded.");
     } else {
         TraceLog(LOG_WARNING,
-                 "Save file size mismatch (%d, expected %d). Ignored.",
-                 size, MAX_LEVELS);
+                 "Save size mismatch (%d, expected %d). Ignored.",
+                 size, MAX_TOTAL_LEVELS);
     }
-
     UnloadFileData(data);
 }
 
@@ -836,7 +824,8 @@ static void DrawHUD(const Game *game) {
     DrawText(TextFormat("SCORE: %d", game->score),
              20, 20, 26, (Color){ 232, 245, 255, 255 });
 
-    DrawText(TextFormat("LEVEL %d / %d", game->currentLevel + 1, MAX_LEVELS),
+    DrawText(TextFormat("LEVEL %d / %d",
+                        game->currentLevel + 1, MAX_TOTAL_LEVELS),
              20, 52, 20, (Color){ 200, 220, 240, 220 });
 
     DrawLivesRow(game->players[0].lives, 30, 92,
@@ -917,8 +906,6 @@ static void DrawHUD(const Game *game) {
 static void ComputeCameraDesired(const Game *game,
                                  float *outZoom, Vector2 *outCenter)
 {
-    const LevelDef *L = &LEVELS[game->currentLevel];
-
     Vector2 p1 = game->players[0].position;
     Vector2 p2 = game->players[1].position;
 
@@ -949,16 +936,19 @@ static void ComputeCameraDesired(const Game *game,
         (minY + maxY) * 0.5f
     };
 
+    float worldW = (float)game->currentWorldW;
+    float worldH = (float)game->currentWorldH;
+
     float viewW = (float)SCREEN_WIDTH  / z;
     float viewH = (float)SCREEN_HEIGHT / z;
     float halfW = viewW * 0.5f;
     float halfH = viewH * 0.5f;
 
-    if (viewW >= L->worldW) center.x = L->worldW * 0.5f;
-    else center.x = fmaxf(halfW, fminf(L->worldW - halfW, center.x));
+    if (viewW >= worldW) center.x = worldW * 0.5f;
+    else center.x = fmaxf(halfW, fminf(worldW - halfW, center.x));
 
-    if (viewH >= L->worldH) center.y = L->worldH * 0.5f;
-    else center.y = fmaxf(halfH, fminf(L->worldH - halfH, center.y));
+    if (viewH >= worldH) center.y = worldH * 0.5f;
+    else center.y = fmaxf(halfH, fminf(worldH - halfH, center.y));
 
     *outZoom   = z;
     *outCenter = center;
@@ -986,18 +976,20 @@ static void UpdateCameraForLevel(Game *game, float dt) {
     game->camera.target.x += (desiredCenter.x    - game->camera.target.x) * t;
     game->camera.target.y += (desiredCenter.y    - game->camera.target.y) * t;
 
-    const LevelDef *L = &LEVELS[game->currentLevel];
+    float worldW = (float)game->currentWorldW;
+    float worldH = (float)game->currentWorldH;
+
     float viewW = (float)SCREEN_WIDTH  / game->camera.zoom;
     float viewH = (float)SCREEN_HEIGHT / game->camera.zoom;
     float halfW = viewW * 0.5f;
     float halfH = viewH * 0.5f;
 
-    if (viewW >= L->worldW) game->camera.target.x = L->worldW * 0.5f;
-    else game->camera.target.x = fmaxf(halfW, fminf(L->worldW - halfW,
+    if (viewW >= worldW) game->camera.target.x = worldW * 0.5f;
+    else game->camera.target.x = fmaxf(halfW, fminf(worldW - halfW,
                                                     game->camera.target.x));
 
-    if (viewH >= L->worldH) game->camera.target.y = L->worldH * 0.5f;
-    else game->camera.target.y = fmaxf(halfH, fminf(L->worldH - halfH,
+    if (viewH >= worldH) game->camera.target.y = worldH * 0.5f;
+    else game->camera.target.y = fmaxf(halfH, fminf(worldH - halfH,
                                                     game->camera.target.y));
 }
 
@@ -1130,13 +1122,13 @@ static void DrawMenu(const Game *game) {
  *  Level select
  * ============================================================ */
 
-#define LS_COLS    4
+#define LS_COLS    5
 #define LS_ROWS    5
-#define LS_BTN_W   130
-#define LS_BTN_H   60
-#define LS_GAP_X   20
-#define LS_GAP_Y   16
-#define LS_TOP     110
+#define LS_BTN_W   120
+#define LS_BTN_H   55
+#define LS_GAP_X   10
+#define LS_GAP_Y   10
+#define LS_TOP     100
 
 static Rectangle LevelButtonRect(int i) {
     int col = i % LS_COLS;
@@ -1154,30 +1146,48 @@ static Rectangle LevelButtonRect(int i) {
 }
 
 static bool LevelUnlocked(const Game *game, int idx) {
-    if (idx == 0) return true;
-    return game->levelCompleted[idx - 1];
+    if (idx < MAX_LEVELS) {
+        if (idx == 0) return true;
+        return game->levelCompleted[idx - 1];
+    }
+    return game->customLevels[idx - MAX_LEVELS].used;
+}
+
+static int FirstEmptyCustomSlot(const Game *game) {
+    for (int i = 0; i < MAX_CUSTOM_LEVELS; i++)
+        if (!game->customLevels[i].used) return i;
+    return 0;
 }
 
 static void UpdateLevelSelect(Game *game) {
     int col = game->levelSelectSelection % LS_COLS;
     int row = game->levelSelectSelection / LS_COLS;
 
-    if (IsKeyPressed(KEY_RIGHT) || IsKeyPressed(KEY_D)) {
+    if (IsKeyPressed(KEY_RIGHT) || IsKeyPressed(KEY_D))
         col = (col + 1) % LS_COLS;
-    }
-    if (IsKeyPressed(KEY_LEFT) || IsKeyPressed(KEY_A)) {
+    if (IsKeyPressed(KEY_LEFT) || IsKeyPressed(KEY_A))
         col = (col + LS_COLS - 1) % LS_COLS;
-    }
-    if (IsKeyPressed(KEY_DOWN) || IsKeyPressed(KEY_S)) {
+    if (IsKeyPressed(KEY_DOWN) || IsKeyPressed(KEY_S))
         row = (row + 1) % LS_ROWS;
-    }
-    if (IsKeyPressed(KEY_UP) || IsKeyPressed(KEY_W)) {
+    if (IsKeyPressed(KEY_UP) || IsKeyPressed(KEY_W))
         row = (row + LS_ROWS - 1) % LS_ROWS;
-    }
+
     game->levelSelectSelection = row * LS_COLS + col;
 
     if (IsKeyPressed(KEY_ESCAPE) || IsKeyPressed(KEY_BACKSPACE)) {
         game->state = GAME_STATE_MENU;
+        return;
+    }
+
+    if (IsKeyPressed(KEY_E)) {
+        int idx = game->levelSelectSelection;
+        if (idx >= MAX_LEVELS) {
+            Editor_Enter(&game->editor, idx - MAX_LEVELS);
+            game->state = GAME_STATE_EDITOR;
+        } else {
+            Editor_Enter(&game->editor, FirstEmptyCustomSlot(game));
+            game->state = GAME_STATE_EDITOR;
+        }
         return;
     }
 
@@ -1186,7 +1196,7 @@ static void UpdateLevelSelect(Game *game) {
     bool    moved = (delta.x != 0.0f || delta.y != 0.0f);
     bool    hovered = false;
 
-    for (int i = 0; i < MAX_LEVELS; i++) {
+    for (int i = 0; i < MAX_TOTAL_LEVELS; i++) {
         if (CheckCollisionPointRec(mouse, LevelButtonRect(i))) {
             if (moved) game->levelSelectSelection = i;
             if (game->levelSelectSelection == i) hovered = true;
@@ -1199,6 +1209,16 @@ static void UpdateLevelSelect(Game *game) {
     if (!activate) return;
 
     int idx = game->levelSelectSelection;
+
+    if (idx >= MAX_LEVELS) {
+        int slot = idx - MAX_LEVELS;
+        if (!game->customLevels[slot].used) {
+            Editor_Enter(&game->editor, slot);
+            game->state = GAME_STATE_EDITOR;
+            return;
+        }
+    }
+
     if (LevelUnlocked(game, idx)) {
         Game_LoadLevel(game, idx);
     }
@@ -1210,16 +1230,24 @@ static void DrawLevelSelect(const Game *game) {
     const char *title = "LEVEL SELECT";
     DrawText(title,
              SCREEN_WIDTH / 2 - MeasureText(title, 42) / 2,
-             45, 42, (Color){ 232, 245, 255, 255 });
+             35, 42, (Color){ 232, 245, 255, 255 });
 
-    for (int i = 0; i < MAX_LEVELS; i++) {
+    for (int i = 0; i < MAX_TOTAL_LEVELS; i++) {
         Rectangle r        = LevelButtonRect(i);
+        bool      isCustom = (i >= MAX_LEVELS);
+        bool      used     = isCustom
+                             ? game->customLevels[i - MAX_LEVELS].used
+                             : true;
         bool      unlocked = LevelUnlocked(game, i);
         bool      done     = game->levelCompleted[i];
         bool      selected = (game->levelSelectSelection == i);
 
         Color fill, border, text;
-        if (!unlocked) {
+        if (isCustom && !used) {
+            fill   = (Color){  20,  30,  40, 200 };
+            border = (Color){  90, 130, 170, 220 };
+            text   = (Color){ 150, 190, 220, 255 };
+        } else if (!unlocked) {
             fill   = (Color){  20,  20,  30, 200 };
             border = (Color){  70,  70,  90, 220 };
             text   = (Color){ 120, 130, 150, 255 };
@@ -1242,25 +1270,33 @@ static void DrawLevelSelect(const Game *game) {
         DrawRectangleLinesEx(r, 2.5f, border);
 
         const char *num = TextFormat("%d", i + 1);
-        int  fs = 28;
+        int  fs = 24;
         DrawText(num,
                  (int)(r.x + r.width / 2) - MeasureText(num, fs) / 2,
-                 (int)(r.y + 8),
+                 (int)(r.y + 6),
                  fs, text);
 
-        const char *name = LEVELS[i].name;
-        int  ns = 12;
-        if (!unlocked) name = "LOCKED";
+        const char *name;
+        int  ns = 11;
+        if (isCustom && !used) {
+            name = "CREATE";
+        } else if (isCustom) {
+            name = game->customLevels[i - MAX_LEVELS].name;
+        } else {
+            name = LEVELS[i].name;
+        }
+        if (!unlocked && !isCustom) name = "LOCKED";
+
         DrawText(name,
                  (int)(r.x + r.width / 2) - MeasureText(name, ns) / 2,
                  (int)(r.y + r.height - 20),
                  ns, text);
     }
 
-    const char *hint = "Arrows to move  -  Enter to play  -  Esc to go back";
+    const char *hint = "Arrows move  -  Enter play  -  E edit/create  -  Esc back";
     DrawText(hint,
              SCREEN_WIDTH / 2 - MeasureText(hint, 15) / 2,
-             SCREEN_HEIGHT - 24, 15, (Color){ 200, 220, 240, 200 });
+             SCREEN_HEIGHT - 22, 15, (Color){ 200, 220, 240, 200 });
 }
 
 /* ============================================================
@@ -1288,14 +1324,16 @@ static void DrawControls(void) {
         "Player 2:  Left / Right to move,  Up to jump,  M to shoot",
         "Stun enemies with shards - don't touch them!",
         "Survive 5 seconds to complete the level.",
-        "You have 3 lives. If both players are out, the level fails."
+        "You have 3 lives. If both players are out, the level fails.",
+        "",
+        "Level Editor:  number keys pick tools, Q/R cycle enemy type"
     };
     int count = (int)(sizeof(lines) / sizeof(lines[0]));
 
     for (int i = 0; i < count; i++) {
         DrawText(lines[i],
-                 SCREEN_WIDTH / 2 - MeasureText(lines[i], 20) / 2,
-                 170 + i * 40, 20, (Color){ 200, 225, 245, 255 });
+                 SCREEN_WIDTH / 2 - MeasureText(lines[i], 18) / 2,
+                 160 + i * 32, 18, (Color){ 200, 225, 245, 255 });
     }
 
     const char *back = "Press Esc or click to go back";
@@ -1364,7 +1402,6 @@ static void BuildLadders(Game *game) {
 
         Rectangle upper = game->platforms[i].bounds;
 
-        /* Skip the ground floor */
         if (upper.y >= 440.0f) continue;
 
         float ladderX = upper.x + upper.width * 0.5f - LADDER_WIDTH * 0.5f;
@@ -1425,36 +1462,86 @@ static void SpawnEnemiesForLevel(Game *game, const LevelDef *L) {
 }
 
 void Game_LoadLevel(Game *game, int idx) {
-    if (idx < 0)             idx = 0;
-    if (idx >= MAX_LEVELS)   idx = MAX_LEVELS - 1;
+    if (idx < 0)                 idx = 0;
+    if (idx >= MAX_TOTAL_LEVELS) idx = MAX_TOTAL_LEVELS - 1;
 
     game->currentLevel = idx;
 
-    const LevelDef *L = &LEVELS[idx];
-
-    LoadLevelPlatforms(game, L);
-
-    Jack_Init(&game->players[0], L->spawn1, WHITE);
-    Jack_Init(&game->players[1], L->spawn2, (Color){ 255, 110, 110, 255 });
-
+    Platform_InitAll(game->platforms);
     Shard_InitAll(game->shards);
     Enemy_InitAll(game->enemies);
     EnemyProjectile_InitAll(game->enemyProjectiles);
     JumpPad_InitAll(game->jumppads);
     Spike_InitAll(game->spikes);
     MovingPlatform_InitAll(game->movingPlatforms);
-
+    Ladder_InitAll(game->ladders);
     Frozen_Init(&game->frozen);
     Particle_InitAll(&game->particles);
 
-    SpawnEnemiesForLevel(game, L);
+    if (idx < MAX_LEVELS) {
+        /* ---------- Built-in ---------- */
+        const LevelDef *L = &LEVELS[idx];
 
-    PlaceJumppadsRandomly(game, L);
-    PlaceSpikesRandomly(game, L);
+        for (int i = 0; i < L->nPlatforms && i < MAX_PLATFORMS; i++)
+            Platform_Add(game->platforms, L->platforms[i]);
+        BuildLadders(game);
 
-    int movingTarget = 1 + (idx / 8);
-    if (movingTarget > 3) movingTarget = 3;
-    PlaceMovingPlatformsRandomly(game, L, movingTarget);
+        Jack_Init(&game->players[0], L->spawn1, WHITE);
+        Jack_Init(&game->players[1], L->spawn2,
+                  (Color){ 255, 110, 110, 255 });
+
+        SpawnEnemiesForLevel(game, L);
+        PlaceJumppadsRandomly(game, L);
+        PlaceSpikesRandomly(game, L);
+
+        int movingTarget = 1 + (idx / 8);
+        if (movingTarget > 3) movingTarget = 3;
+        PlaceMovingPlatformsRandomly(game, L, movingTarget);
+
+        game->currentWorldW = L->worldW;
+        game->currentWorldH = L->worldH;
+
+    } else {
+        /* ---------- Custom ---------- */
+        int slot = idx - MAX_LEVELS;
+        if (slot < 0) slot = 0;
+        if (slot >= MAX_CUSTOM_LEVELS) slot = MAX_CUSTOM_LEVELS - 1;
+
+        CustomLevel *C = &game->customLevels[slot];
+
+        for (int i = 0; i < C->nPlatforms && i < MAX_PLATFORMS; i++)
+            Platform_Add(game->platforms, C->platforms[i]);
+
+        for (int i = 0; i < C->nLadders && i < MAX_LADDERS; i++)
+            Ladder_Add(game->ladders, C->ladders[i]);
+
+        for (int i = 0; i < C->nSpikes && i < MAX_SPIKES; i++)
+            Spike_Add(game->spikes, C->spikes[i]);
+
+        for (int i = 0; i < C->nJumppads && i < MAX_JUMPPADS; i++)
+            JumpPad_Add(game->jumppads, C->jumppads[i]);
+
+        for (int i = 0; i < C->nMoving && i < MAX_MOVING_PLATFORMS; i++) {
+            MovingPlatform_Add(game->movingPlatforms,
+                               C->moving[i].startRect,
+                               C->moving[i].endRect,
+                               0.35f);
+        }
+
+        for (int i = 0; i < C->nEnemies && i < MAX_ENEMIES; i++) {
+            EditorEnemy *se = &C->enemies[i];
+            Enemy_PlaceDirect(game->enemies, se->position, se->baseY,
+                              se->patrolLeft, se->patrolRight,
+                              (EnemyType)se->type);
+        }
+
+        Jack_Init(&game->players[0], C->spawn1, WHITE);
+        Jack_Init(&game->players[1], C->spawn2,
+                  (Color){ 255, 110, 110, 255 });
+
+        game->currentWorldW = EDITOR_WORLD_W;
+        game->currentWorldH = EDITOR_WORLD_H;
+    }
 
     game->active             = true;
     game->state              = GAME_STATE_PLAYING;
@@ -1569,6 +1656,13 @@ static const JackControls P2_CONTROLS = { KEY_LEFT, KEY_RIGHT, KEY_UP, KEY_DOWN,
 
 void Game_Init(Game *game) {
     memset(game->levelCompleted, 0, sizeof(game->levelCompleted));
+
+    for (int i = 0; i < MAX_CUSTOM_LEVELS; i++) {
+        Editor_InitCustomLevel(&game->customLevels[i]);
+    }
+    game->editor.active = false;
+    game->editor.slot   = 0;
+
     game->currentLevel         = 0;
     game->menuSelection        = 0;
     game->levelSelectSelection = 0;
@@ -1578,9 +1672,8 @@ void Game_Init(Game *game) {
     game->levelCompleteTimer   = 0.0f;
     game->levelTimer           = 0.0f;
     game->frameCounter         = 0.0f;
-    MovingPlatform_InitAll(game->movingPlatforms);
-    JumpPad_InitAll(game->jumppads);
-    Spike_InitAll(game->spikes);
+    game->currentWorldW        = 1200;
+    game->currentWorldH        = 620;
     game->state                = GAME_STATE_MENU;
     game->camera               = (Camera2D){ 0 };
 }
@@ -1599,7 +1692,7 @@ void Game_Update(Game *game) {
         if (game->levelCompleteTimer <= 0.0f) {
             game->levelCompleteTimer = 0.0f;
             int next = game->currentLevel + 1;
-            if (next >= MAX_LEVELS) {
+            if (next >= MAX_TOTAL_LEVELS) {
                 game->state         = GAME_STATE_MENU;
                 game->menuSelection = 0;
                 return;
@@ -1611,51 +1704,34 @@ void Game_Update(Game *game) {
         return;
     }
 
-    const LevelDef *L = &LEVELS[game->currentLevel];
-
     /* --- 1. Move moving platforms and animate jumppads --- */
     MovingPlatform_UpdateAll(game->movingPlatforms, dt);
     JumpPad_UpdateAll(game->jumppads, dt);
 
-    /* --- 2. Carry players standing on a moving platform ---
-     *
-     *  For every player whose feet are within a small tolerance of a
-     *  platform's PREVIOUS top edge (i.e. they were standing on it
-     *  before this frame's platform move), shift them by the exact
-     *  delta the platform just moved. This makes them ride along
-     *  horizontally, vertically, or diagonally with the platform. */
+    /* --- 2. Carry players standing on a moving platform --- */
     for (int p = 0; p < PLAYER_COUNT; p++) {
         Jack *j = &game->players[p];
         if (!Jack_IsPlayable(j))    continue;
         if (!j->onGround)           continue;
 
-        /* Player feet Y before applying any platform delta */
         float feetY = j->position.y + j->radiusY;
 
         for (int m = 0; m < MAX_MOVING_PLATFORMS; m++) {
             MovingPlatform *mp = &game->movingPlatforms[m];
             if (!mp->active) continue;
 
-            /* Use the platform's PREVIOUS bounds for the standing test
-             * — that's where the player was actually standing before
-             * the platform moved this frame. */
-            float platLeft   = mp->prevPos.x;
-            float platTop    = mp->prevPos.y;
-            float platRight  = platLeft + mp->bounds.width;
+            float platLeft  = mp->prevPos.x;
+            float platTop   = mp->prevPos.y;
+            float platRight = platLeft + mp->bounds.width;
 
             if (j->position.x < platLeft)  continue;
             if (j->position.x > platRight) continue;
 
-            /* Feet must be within tolerance of the platform's top edge.
-             * 14 px gives plenty of slack for the +/- 1 px landing snap. */
             if (fabsf(feetY - platTop) > 14.0f) continue;
 
-            /* Apply the platform's exact delta to the player */
             j->position.x += mp->bounds.x - mp->prevPos.x;
             j->position.y += mp->bounds.y - mp->prevPos.y;
 
-            /* Kill any residual vertical velocity — the player is on
-             * the platform, not falling through it. */
             if (j->velocityY > 0.0f) j->velocityY = 0.0f;
 
             break;
@@ -1665,10 +1741,10 @@ void Game_Update(Game *game) {
     /* --- 3. Players --- */
     Jack_Update(&game->players[0], game->platforms, game->ladders,
                 game->movingPlatforms, &P1_CONTROLS,
-                L->worldW, L->worldH);
+                game->currentWorldW, game->currentWorldH);
     Jack_Update(&game->players[1], game->platforms, game->ladders,
                 game->movingPlatforms, &P2_CONTROLS,
-                L->worldW, L->worldH);
+                game->currentWorldW, game->currentWorldH);
 
     /* --- 4. Freeze / particles --- */
     float radiusPx = FROZEN_RADIUS_TILES * FROZEN_TILE_SIZE;
@@ -1691,7 +1767,7 @@ void Game_Update(Game *game) {
     Particle_UpdateAll(&game->particles, dt);
 
     /* --- 5. Shards --- */
-    Shard_UpdateAll(game->shards, L->worldW);
+    Shard_UpdateAll(game->shards, game->currentWorldW);
     ResolveShardPlatformCollisions(game);
 
     /* --- 6. Player arrays --- */
@@ -1716,7 +1792,8 @@ void Game_Update(Game *game) {
                     PLAYER_COUNT, game->enemyProjectiles);
 
     EnemyProjectile_UpdateAll(game->enemyProjectiles, nullHitboxes,
-                              PLAYER_COUNT, L->worldW, L->worldH);
+                              PLAYER_COUNT,
+                              game->currentWorldW, game->currentWorldH);
 
     /* --- 8. Player vs enemy / projectile --- */
     ApplyPlayerThreatCollisions(game, playerHitboxes);
@@ -1805,10 +1882,13 @@ void Game_Update(Game *game) {
     UpdateCameraForLevel(game, dt);
 }
 
-
-
 void Game_Draw(const Game *game) {
     DrawBackgroundImage(game);
+
+    if (game->state == GAME_STATE_EDITOR) {
+        Editor_Draw(game);
+        return;
+    }
 
     if (game->state == GAME_STATE_PLAYING) {
         BeginMode2D(game->camera);
@@ -1834,6 +1914,7 @@ void Game_Draw(const Game *game) {
         case GAME_STATE_LEVEL_SELECT:  DrawLevelSelect(game);  break;
         case GAME_STATE_CONTROLS:      DrawControls();         break;
         case GAME_STATE_PLAYING:       DrawHUD(game);          break;
+        default: break;
     }
 }
 
@@ -1850,6 +1931,7 @@ void Game_Run(Game *game) {
     PlayerSprites_Load(&game->sprites);
 
     Game_Init(game);
+    Editor_LoadAll(game->customLevels);
     LoadProgress(game);
 
     while (!WindowShouldClose() && !game->quitRequested) {
@@ -1864,6 +1946,10 @@ void Game_Run(Game *game) {
 
             case GAME_STATE_CONTROLS:
                 UpdateControls(game);
+                break;
+
+            case GAME_STATE_EDITOR:
+                Editor_Update(game);
                 break;
 
             case GAME_STATE_PLAYING:
@@ -1886,6 +1972,7 @@ void Game_Run(Game *game) {
     }
 
     SaveProgress(game);
+    Editor_SaveAll(game->customLevels);
 
     PlayerSprites_Unload(&game->sprites);
     if (game->background.id != 0) UnloadTexture(game->background);

@@ -108,6 +108,35 @@ bool Enemy_SpawnFlyer(Enemy enemies[MAX_ENEMIES], Rectangle platform) {
     return Enemy_SpawnInternal(enemies, platform, ENEMY_FLYER);
 }
 
+bool Enemy_PlaceDirect(Enemy enemies[MAX_ENEMIES], Vector2 position,
+                       float baseY, float patrolLeft, float patrolRight,
+                       EnemyType type)
+{
+    for (int i = 0; i < MAX_ENEMIES; i++) {
+        if (!enemies[i].active) {
+            enemies[i].type          = type;
+            enemies[i].position      = position;
+            enemies[i].baseY         = baseY;
+            enemies[i].patrolLeft    = patrolLeft;
+            enemies[i].patrolRight   = patrolRight;
+            enemies[i].speed         = (type == ENEMY_UNSTUNNABLE)
+                                       ? ENEMY_UNSTUNNABLE_SPEED
+                                       : ENEMY_SPEED;
+            enemies[i].dir           = 1.0f;
+            enemies[i].phase         = 0.0f;
+            enemies[i].flyPhase      = 0.0f;
+            enemies[i].stunTimer     = 0.0f;
+            enemies[i].shootCooldown = ENEMY_SHOOT_COOLDOWN;
+            enemies[i].dashActive    = 0.0f;
+            enemies[i].dashTimer     = ENEMY_DASH_COOLDOWN;
+            enemies[i].velocityY     = 0.0f;
+            enemies[i].airborne      = false;
+            enemies[i].active        = true;
+            return true;
+        }
+    }
+    return false;
+}
 /* ============================================================
  *  Enemy — update
  * ============================================================ */

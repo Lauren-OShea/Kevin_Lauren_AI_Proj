@@ -91,4 +91,8 @@ bool EnemyProjectile_UpdateAll(EnemyProjectile projectiles[MAX_ENEMY_PROJECTILES
 
 void EnemyProjectile_DrawAll(const EnemyProjectile projectiles[MAX_ENEMY_PROJECTILES]);
 
+bool Enemy_PlaceDirect(Enemy enemies[MAX_ENEMIES], Vector2 position,
+                       float baseY, float patrolLeft, float patrolRight,
+                       EnemyType type);
+
 #endif /* JACKFROST_ENEMY_H */
