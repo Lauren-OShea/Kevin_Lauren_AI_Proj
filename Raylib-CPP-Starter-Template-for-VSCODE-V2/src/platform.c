@@ -29,22 +29,52 @@ void Platform_DrawAll(const Platform platforms[MAX_PLATFORMS],
 
         Rectangle b = platforms[i].bounds;
 
-        /* Body */
-        DrawRectangleRec(b, (Color){ 90, 140, 200, 255 });
+        /* Figure out which grid cells this platform overlaps */
+        int c0 = (int)(b.x) / FROZEN_TILE_SIZE;
+        int c1 = (int)(b.x + b.width  - 1) / FROZEN_TILE_SIZE;
+        int r0 = (int)(b.y) / FROZEN_TILE_SIZE;
+        int r1 = (int)(b.y + b.height - 1) / FROZEN_TILE_SIZE;
 
-        /* Snow cap */
-        DrawRectangle((int)b.x, (int)b.y,
-                      (int)b.width, 4,
-                      (Color){ 240, 250, 255, 255 });
+        /* Draw each tile individually */
+        for (int r = r0; r <= r1; r++) {
+            for (int c = c0; c <= c1; c++) {
+                Rectangle cell = {
+                    (float)(c * FROZEN_TILE_SIZE),
+                    (float)(r * FROZEN_TILE_SIZE),
+                    (float)FROZEN_TILE_SIZE,
+                    (float)FROZEN_TILE_SIZE
+                };
 
-        /* Frozen overlay */
-        if (frozen) {
-            Frozen_DrawOverlayRect(frozen, b,
-                                   (Color){ 170, 220, 255, 160 });
+                Rectangle tile = GetCollisionRec(cell, b);
+                if (tile.width <= 0.0f || tile.height <= 0.0f) continue;
+
+                bool isFrozen = frozen &&
+                                Frozen_IsCellFrozen(frozen, c, r);
+
+                Color body = isFrozen
+                    ? (Color){ 170, 220, 255, 255 }   /* icy blue */
+                    : (Color){ 200,  60,  60, 255 };  /* red brick */
+
+                Color cap = isFrozen
+                    ? (Color){ 220, 240, 255, 255 }
+                    : (Color){ 240, 110, 110, 255 };
+
+                Color line = isFrozen
+                    ? (Color){ 100, 160, 210, 255 }
+                    : (Color){ 130,  30,  30, 255 };
+
+                DrawRectangleRec(tile, body);
+
+                /* Snow cap only on top edge of the platform */
+                if (tile.y == b.y) {
+                    DrawRectangle((int)tile.x, (int)tile.y,
+                                  (int)tile.width, 4, cap);
+                }
+
+                /* Outline every tile so they look like blocks */
+                DrawRectangleLinesEx(tile, 1.0f, line);
+            }
         }
-
-        /* Outline */
-        DrawRectangleLinesEx(b, 1.0f, (Color){ 40, 80, 130, 255 });
     }
 }
 
@@ -92,23 +122,44 @@ void Ladder_DrawAll(const Ladder *ladders,
 
         Rectangle b = ladders[i].bounds;
 
-        /* Rails */
-        DrawRectangle((int)b.x, (int)b.y,
-                      2, (int)b.height, (Color){ 150, 90, 40, 255 });
-        DrawRectangle((int)(b.x + b.width - 2), (int)b.y,
-                      2, (int)b.height, (Color){ 150, 90, 40, 255 });
+        int r0 = (int)(b.y) / FROZEN_TILE_SIZE;
+        int r1 = (int)(b.y + b.height - 1) / FROZEN_TILE_SIZE;
 
-        /* Rungs */
-        for (float y = b.y + 6; y < b.y + b.height; y += 14.0f) {
-            DrawRectangle((int)b.x, (int)y,
-                          (int)b.width, 2,
-                          (Color){ 180, 120, 60, 255 });
-        }
+        /* Draw each vertical tile of the ladder separately */
+        for (int r = r0; r <= r1; r++) {
+            Rectangle cell = {
+                b.x,
+                (float)(r * FROZEN_TILE_SIZE),
+                b.width,
+                (float)FROZEN_TILE_SIZE
+            };
 
-        /* Frozen overlay */
-        if (frozen) {
-            Frozen_DrawOverlayRect(frozen, b,
-                                   (Color){ 180, 225, 255, 180 });
+            Rectangle tile = GetCollisionRec(cell, b);
+            if (tile.width <= 0.0f || tile.height <= 0.0f) continue;
+
+            int c = (int)((b.x + b.width * 0.5f) / FROZEN_TILE_SIZE);
+            bool isFrozen = frozen &&
+                            Frozen_IsCellFrozen(frozen, c, r);
+
+            Color rail = isFrozen
+                ? (Color){ 100, 180, 240, 255 }
+                : (Color){ 150,  90,  40, 255 };
+
+            Color rung = isFrozen
+                ? (Color){ 140, 210, 255, 255 }
+                : (Color){ 180, 120,  60, 255 };
+
+            /* Rails */
+            DrawRectangle((int)tile.x, (int)tile.y,
+                          2, (int)tile.height, rail);
+            DrawRectangle((int)(tile.x + tile.width - 2), (int)tile.y,
+                          2, (int)tile.height, rail);
+
+            /* Rungs */
+            for (float y = tile.y + 6; y < tile.y + tile.height - 2; y += 14.0f) {
+                DrawRectangle((int)tile.x, (int)y,
+                              (int)tile.width, 2, rung);
+            }
         }
     }
 }

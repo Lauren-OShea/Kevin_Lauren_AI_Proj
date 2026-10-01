@@ -1547,7 +1547,7 @@ void Game_LoadLevel(Game *game, int idx) {
     game->state              = GAME_STATE_PLAYING;
     game->frameCounter       = 0.0f;
     game->levelCompleteTimer = 0.0f;
-    game->levelTimer         = 5.0f;
+    game->levelTimer         = 15.0f;   /* <-- CHANGED from 5.0f to 15.0f */
 
     SnapCameraToPlayers(game);
 }
@@ -1745,10 +1745,11 @@ void Game_Update(Game *game) {
     Jack_Update(&game->players[1], game->platforms, game->ladders,
                 game->movingPlatforms, &P2_CONTROLS,
                 game->currentWorldW, game->currentWorldH);
-
+    
     /* --- 4. Freeze / particles --- */
     float radiusPx = FROZEN_RADIUS_TILES * FROZEN_TILE_SIZE;
-
+    
+    
     for (int p = 0; p < PLAYER_COUNT; p++) {
         Jack *j = &game->players[p];
         if (j->state != JACK_STATE_ALIVE) continue;
@@ -1756,15 +1757,42 @@ void Game_Update(Game *game) {
         Vector2 feet = { j->position.x, j->position.y + j->radiusY };
         Frozen_FreezeCircle(&game->frozen, feet, radiusPx);
 
-        bool moving = IsKeyDown(p == 0 ? KEY_A : KEY_LEFT) ||
-                      IsKeyDown(p == 0 ? KEY_D : KEY_RIGHT);
+        bool moving = IsKeyDown(
+            p == 0 ? KEY_A : KEY_LEFT) || IsKeyDown(p == 0 ? KEY_D : KEY_RIGHT);
 
         if (moving || j->climbing) {
             Particle_SpawnIcy(&game->particles, feet, 30.0f);
         }
     }
 
-    Particle_UpdateAll(&game->particles, dt);
+    /* --- Win condition: 100% of the current level's grid is frozen --- */
+    int levelCols = (int)(game->currentWorldW / FROZEN_TILE_SIZE);
+    int levelRows = (int)(game->currentWorldH / FROZEN_TILE_SIZE);
+
+    if (levelCols > FROZEN_COLS) levelCols = FROZEN_COLS;
+    if (levelRows > FROZEN_ROWS) levelRows = FROZEN_ROWS;
+
+    bool allFrozen = true;
+    for (int r = 0; r < levelRows && allFrozen; r++) {
+        for (int c = 0; c < levelCols; c++) {
+            if (!Frozen_IsCellFrozen(&game->frozen, c, r)) {
+                allFrozen = false;
+                break;
+            }
+        }
+    }
+
+    if (allFrozen) {
+        if (!game->levelCompleted[game->currentLevel]) {
+            game->levelCompleted[game->currentLevel] = true;
+            SaveProgress(game);
+        }
+        game->levelCompleteTimer = 1.5f;
+        return;
+    }
+    /* ----------------------------------------------------------------- */
+
+    Particle_UpdateAll(&game->particles, GetFrameTime());
 
     /* --- 5. Shards --- */
     Shard_UpdateAll(game->shards, game->currentWorldW);
