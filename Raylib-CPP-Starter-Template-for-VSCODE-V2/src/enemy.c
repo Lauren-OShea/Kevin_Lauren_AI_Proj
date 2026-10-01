@@ -20,7 +20,7 @@ Rectangle Enemy_GetRect(const Enemy *enemy) {
 
 bool Enemy_Stun(Enemy *enemy) {
     if (!enemy->active)                    return false;
-    if (enemy->type == ENEMY_UNSTUNNABLE)  return false;   /* immune */
+    if (enemy->type == ENEMY_UNSTUNNABLE)  return false;
     if (enemy->stunTimer > 0.0f)           return false;
     enemy->stunTimer = ENEMY_STUN_TIME;
     return true;
@@ -54,11 +54,11 @@ static bool Enemy_SpawnInternal(Enemy enemies[MAX_ENEMIES],
             enemies[i].dashTimer     = ENEMY_DASH_COOLDOWN *
                                        (0.5f + (float)GetRandomValue(0, 50) / 100.0f);
             enemies[i].baseY         = platform.y;
+            enemies[i].velocityY     = 0.0f;
+            enemies[i].airborne      = false;
 
             switch (type) {
                 case ENEMY_FLYER:
-                    /* Spawn well above the platform so it never merges
-                     * with a platform above (levels space rows 80px). */
                     enemies[i].position = (Vector2){
                         spawnX, platform.y - ENEMY_FLY_SPAWN_UP
                     };
@@ -156,6 +156,20 @@ bool Enemy_UpdateAll(Enemy enemies[MAX_ENEMIES],
             continue;
         }
 
+        /* ---- Airborne: launched by a jumppad ---- */
+        if (enemies[i].airborne) {
+            enemies[i].velocityY += 0.7f;
+            enemies[i].position.y += enemies[i].velocityY;
+
+            if (enemies[i].velocityY > 0.0f &&
+                enemies[i].position.y >= enemies[i].baseY) {
+                enemies[i].position.y = enemies[i].baseY;
+                enemies[i].velocityY  = 0.0f;
+                enemies[i].airborne   = false;
+            }
+            continue;
+        }
+
         /* ---- Movement (per type) ---- */
         switch (enemies[i].type) {
             case ENEMY_DASHER: {
@@ -198,7 +212,7 @@ bool Enemy_UpdateAll(Enemy enemies[MAX_ENEMIES],
             enemies[i].dir = -1.0f;
         }
 
-        /* ---- Shooter behaviour (shooters + flyers) ---- */
+        /* ---- Shooter behaviour ---- */
         if (enemies[i].type == ENEMY_SHOOTER ||
             enemies[i].type == ENEMY_FLYER)
         {
@@ -311,7 +325,7 @@ void Enemy_DrawAll(const Enemy enemies[MAX_ENEMIES]) {
         float bob   = stunned ? 0.0f : sinf(enemies[i].phase) * 1.5f;
         float swing = stunned ? 0.0f : sinf(enemies[i].phase * 2.0f) * 2.5f;
 
-        /* Stun aura (all except unstunnable) */
+        /* Stun aura */
         if (stunned) {
             float pulse = 0.6f + 0.4f * sinf((float)GetTime() * 12.0f);
             DrawCircleLines((int)x, (int)(baseY - 22), 22,
@@ -323,7 +337,6 @@ void Enemy_DrawAll(const Enemy enemies[MAX_ENEMIES]) {
 
         switch (enemies[i].type) {
 
-        /* ---------------- Walker ---------------- */
         case ENEMY_WALKER: {
             Color body  = (Color){ 200, 105,  45, 255 };
             Color dark  = (Color){ 115,  50,  20, 255 };
@@ -337,7 +350,6 @@ void Enemy_DrawAll(const Enemy enemies[MAX_ENEMIES]) {
                                 x, baseY, bob, swing, facing, false);
         } break;
 
-        /* ---------------- Shooter ---------------- */
         case ENEMY_SHOOTER: {
             Color body  = (Color){ 180,  60,  60, 255 };
             Color dark  = (Color){ 100,  25,  25, 255 };
@@ -351,7 +363,6 @@ void Enemy_DrawAll(const Enemy enemies[MAX_ENEMIES]) {
                                 x, baseY, bob, swing, facing, true);
         } break;
 
-        /* ---------------- Dasher ---------------- */
         case ENEMY_DASHER: {
             Color body  = (Color){ 230, 175,  50, 255 };
             Color dark  = (Color){ 130,  85,  15, 255 };
@@ -362,7 +373,6 @@ void Enemy_DrawAll(const Enemy enemies[MAX_ENEMIES]) {
                 light = (Color){ 200, 220, 255, 255 };
             }
 
-            /* Speed lines when dashing */
             if (enemies[i].dashActive > 0.0f && !stunned) {
                 Color trail = (Color){ 255, 220, 120, 140 };
                 for (int k = 1; k <= 3; k++) {
@@ -375,7 +385,6 @@ void Enemy_DrawAll(const Enemy enemies[MAX_ENEMIES]) {
             DrawWalkerOrShooter(&enemies[i], body, dark, light,
                                 x, baseY, bob, swing, facing, false);
 
-            /* Racing goggles */
             if (!stunned) {
                 float bodyCY = baseY - 22 + bob;
                 DrawRectangle((int)(x - 14), (int)(bodyCY - 6),
@@ -387,7 +396,6 @@ void Enemy_DrawAll(const Enemy enemies[MAX_ENEMIES]) {
             }
         } break;
 
-        /* ---------------- Flyer ---------------- */
         case ENEMY_FLYER: {
             Color body  = (Color){ 130, 130, 220, 255 };
             Color dark  = (Color){  60,  60, 130, 255 };
@@ -400,13 +408,11 @@ void Enemy_DrawAll(const Enemy enemies[MAX_ENEMIES]) {
 
             Color eye = (Color){ 20, 10, 40, 255 };
 
-            /* Shadow on the ground far below (visual hint) */
             DrawEllipse((int)x, (int)(baseY + ENEMY_FLY_SPAWN_UP + 1),
                         10, 3, (Color){ 0, 0, 0, 60 });
 
             float bodyCY = baseY - 18 + bob;
 
-            /* Wings (flap with phase) */
             float flap = sinf(enemies[i].flyPhase * 6.0f) * 0.5f + 0.5f;
             float wingTipL = x - 22 - flap * 4.0f;
             float wingTipR = x + 22 + flap * 4.0f;
@@ -424,11 +430,9 @@ void Enemy_DrawAll(const Enemy enemies[MAX_ENEMIES]) {
                 (Color){ light.r, light.g, light.b, 200 }
             );
 
-            /* Body */
             DrawEllipse((int)x, (int)bodyCY, 12, 14, body);
             DrawEllipseLines((int)x, (int)bodyCY, 12, 14, dark);
 
-            /* Little cannon arm for shooting */
             if (!stunned) {
                 DrawRectangle((int)(x + facing * 10 - 4),
                               (int)(bodyCY - 1), 8, 5, dark);
@@ -444,7 +448,6 @@ void Enemy_DrawAll(const Enemy enemies[MAX_ENEMIES]) {
                 }
             }
 
-            /* Eyes */
             float eyeX = facing * 2.0f;
             DrawCircle((int)(x - 4 + eyeX), (int)(bodyCY - 3), 3, eye);
             DrawCircle((int)(x + 4 + eyeX), (int)(bodyCY - 3), 3, eye);
@@ -452,7 +455,6 @@ void Enemy_DrawAll(const Enemy enemies[MAX_ENEMIES]) {
             DrawCircle((int)(x + 5 + eyeX), (int)(bodyCY - 4), 1, WHITE);
         } break;
 
-        /* ---------------- Unstunnable ---------------- */
         case ENEMY_UNSTUNNABLE: {
             Color body  = (Color){ 70, 70, 80, 255 };
             Color dark  = (Color){ 30, 30, 40, 255 };
@@ -463,22 +465,18 @@ void Enemy_DrawAll(const Enemy enemies[MAX_ENEMIES]) {
 
             DrawEllipse((int)x, (int)(baseY + 1), 16, 5, (Color){ 0, 0, 0, 110 });
 
-            /* Heavy legs */
             DrawRectangle((int)(x - 10), (int)(baseY - 8), 7,
                           (int)(8 + swingU), dark);
             DrawRectangle((int)(x + 3),  (int)(baseY - 8), 7,
                           (int)(8 - swingU), dark);
 
-            /* Bulky body */
             float bodyCY = baseY - 22 + bob * 0.5f;
             DrawEllipse((int)x, (int)bodyCY, 17, 16, body);
             DrawEllipseLines((int)x, (int)bodyCY, 17, 16, dark);
 
-            /* Armour plates */
             DrawRectangle((int)(x - 15), (int)(bodyCY - 2), 30, 4, light);
             DrawRectangle((int)(x - 12), (int)(bodyCY + 5), 24, 3, light);
 
-            /* Helmet crest */
             DrawTriangle(
                 (Vector2){ x - 8, bodyCY - 14 },
                 (Vector2){ x,     bodyCY - 26 },
@@ -486,14 +484,12 @@ void Enemy_DrawAll(const Enemy enemies[MAX_ENEMIES]) {
                 dark
             );
 
-            /* Glowing red eyes */
             float eyeX = facing * 3.0f;
             DrawCircle((int)(x - 5 + eyeX), (int)(bodyCY - 3), 3, eye);
             DrawCircle((int)(x + 5 + eyeX), (int)(bodyCY - 3), 3, eye);
             DrawCircle((int)(x - 5 + eyeX), (int)(bodyCY - 3), 1, WHITE);
             DrawCircle((int)(x + 5 + eyeX), (int)(bodyCY - 3), 1, WHITE);
 
-            /* Shield emblem (visual cue: immune to shards) */
             DrawCircleLines((int)(x + 14), (int)(bodyCY + 2), 5,
                             (Color){ 200, 200, 220, 255 });
             DrawLineEx((Vector2){ x + 14, bodyCY - 2 },

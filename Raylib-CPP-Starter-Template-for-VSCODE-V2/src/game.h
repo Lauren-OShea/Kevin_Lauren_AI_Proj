@@ -9,6 +9,9 @@
 #include "platform.h"
 #include "frozen.h"
 #include "particle.h"
+#include "jumppad.h"
+#include "spike.h"
+#include "movingplatform.h"
 
 #define SCREEN_WIDTH   800
 #define SCREEN_HEIGHT  500
@@ -18,15 +21,12 @@
 #define PLAYER_COUNT   2
 #define MAX_LEVELS     20
 
-
 typedef enum GameState {
     GAME_STATE_MENU = 0,
     GAME_STATE_LEVEL_SELECT,
     GAME_STATE_CONTROLS,
     GAME_STATE_PLAYING
 } GameState;
-
-
 
 typedef struct Game {
     Jack            players[PLAYER_COUNT];
@@ -35,6 +35,9 @@ typedef struct Game {
     EnemyProjectile enemyProjectiles[MAX_ENEMY_PROJECTILES];
     Platform        platforms[MAX_PLATFORMS];
     Ladder          ladders[MAX_LADDERS];
+    MovingPlatform  movingPlatforms[MAX_MOVING_PLATFORMS];
+    JumpPad         jumppads[MAX_JUMPPADS];
+    Spike           spikes[MAX_SPIKES];
     PlayerSprites   sprites;
     Texture2D       background;
     FrozenMap       frozen;
@@ -56,7 +59,7 @@ typedef struct Game {
     Camera2D camera;
     float    levelCompleteTimer;
 
-    float    levelTimer;   /* seconds remaining to survive */
+    float    levelTimer;
 } Game;
 
 void Game_Init(Game *game);

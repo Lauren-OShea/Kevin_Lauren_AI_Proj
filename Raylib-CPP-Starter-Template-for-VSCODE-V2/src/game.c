@@ -553,6 +553,175 @@ static const LevelDef LEVELS[MAX_LEVELS] = {
 };
 
 /* ============================================================
+ *  Random entity placement
+ * ============================================================ */
+
+static void PlaceJumppadsRandomly(Game *game, const LevelDef *L) {
+    for (int i = 0; i < L->nPlatforms; i++) {
+        Rectangle plat = L->platforms[i];
+
+        if (GetRandomValue(0, 99) >= 15) continue;
+        if (plat.width < JUMPPAD_WIDTH + 20.0f) continue;
+
+        float px = plat.x + 10.0f +
+                   (float)GetRandomValue(0, (int)(plat.width - JUMPPAD_WIDTH - 20.0f));
+        Rectangle padRect = { px, plat.y - JUMPPAD_HEIGHT,
+                              JUMPPAD_WIDTH, JUMPPAD_HEIGHT };
+
+        bool overlapsEnemy = false;
+        for (int e = 0; e < MAX_ENEMIES; e++) {
+            if (!game->enemies[e].active) continue;
+            Rectangle er = Enemy_GetRect(&game->enemies[e]);
+            er.x -= 8; er.width += 16;
+            if (CheckCollisionRecs(padRect, er)) { overlapsEnemy = true; break; }
+        }
+        if (overlapsEnemy) continue;
+
+        JumpPad_Add(game->jumppads, padRect);
+    }
+}
+
+static void PlaceSpikesRandomly(Game *game, const LevelDef *L) {
+    for (int i = 0; i < L->nPlatforms; i++) {
+        Rectangle plat = L->platforms[i];
+
+        if (GetRandomValue(0, 99) >= 25) continue;
+        if (plat.width < SPIKE_WIDTH + 20.0f) continue;
+
+        float sx = plat.x + 10.0f +
+                   (float)GetRandomValue(0, (int)(plat.width - SPIKE_WIDTH - 20.0f));
+        Rectangle spikeRect = { sx, plat.y - SPIKE_HEIGHT,
+                                SPIKE_WIDTH, SPIKE_HEIGHT };
+
+        bool tooClose = false;
+        for (int e = 0; e < MAX_ENEMIES; e++) {
+            if (!game->enemies[e].active) continue;
+            Rectangle er = Enemy_GetRect(&game->enemies[e]);
+            er.x      -= SPIKE_SAFE_MARGIN;
+            er.y      -= SPIKE_SAFE_MARGIN;
+            er.width  += SPIKE_SAFE_MARGIN * 2;
+            er.height += SPIKE_SAFE_MARGIN * 2;
+            if (CheckCollisionRecs(spikeRect, er)) { tooClose = true; break; }
+        }
+        if (tooClose) continue;
+        if (Spike_OverlapsRect(game->spikes, spikeRect)) continue;
+
+        bool overlapsPad = false;
+        for (int j = 0; j < MAX_JUMPPADS; j++) {
+            if (!game->jumppads[j].active) continue;
+            if (CheckCollisionRecs(spikeRect, game->jumppads[j].bounds)) {
+                overlapsPad = true;
+                break;
+            }
+        }
+        if (overlapsPad) continue;
+
+        Spike_Add(game->spikes, spikeRect);
+    }
+}
+
+static bool MovingPlatformPlacementSafe(const Game *game, const LevelDef *L,
+                                        Rectangle swept)
+{
+    if (swept.x < 10.0f || swept.y < 10.0f) return false;
+    if (swept.x + swept.width  > L->worldW - 10.0f) return false;
+    if (swept.y + swept.height > L->worldH - 10.0f) return false;
+
+    /* Static platforms — small (8 px) buffer, so the moving platform
+     * can sit right next to / beside existing platforms without
+     * physically overlapping them at any point in its travel. */
+    for (int i = 0; i < L->nPlatforms; i++) {
+        Rectangle p  = L->platforms[i];
+        Rectangle pe = { p.x - 8, p.y - 8, p.width + 16, p.height + 16 };
+        if (CheckCollisionRecs(swept, pe)) return false;
+    }
+
+    /* Other moving platforms — 12 px buffer around their swept boxes */
+    for (int i = 0; i < MAX_MOVING_PLATFORMS; i++) {
+        if (!game->movingPlatforms[i].active) continue;
+        Rectangle s = MovingPlatform_GetSweptBox(&game->movingPlatforms[i]);
+        s.x -= 12; s.y -= 12; s.width += 24; s.height += 24;
+        if (CheckCollisionRecs(swept, s)) return false;
+    }
+
+    /* Flying enemies — full patrol strip + 16 px buffer */
+    for (int i = 0; i < MAX_ENEMIES; i++) {
+        if (!game->enemies[i].active) continue;
+        if (game->enemies[i].type != ENEMY_FLYER) continue;
+
+        Rectangle er = {
+            game->enemies[i].patrolLeft,
+            game->enemies[i].baseY - ENEMY_FLY_AMPLITUDE - 8.0f,
+            game->enemies[i].patrolRight - game->enemies[i].patrolLeft,
+            ENEMY_FLY_AMPLITUDE * 2.0f + 16.0f
+        };
+        er.x -= 16; er.width += 32;
+        if (CheckCollisionRecs(swept, er)) return false;
+    }
+
+    /* Jumppads & spikes */
+    for (int i = 0; i < MAX_JUMPPADS; i++) {
+        if (!game->jumppads[i].active) continue;
+        if (CheckCollisionRecs(swept, game->jumppads[i].bounds)) return false;
+    }
+    for (int i = 0; i < MAX_SPIKES; i++) {
+        if (!game->spikes[i].active) continue;
+        if (CheckCollisionRecs(swept, game->spikes[i].bounds)) return false;
+    }
+
+    return true;
+}
+
+static void PlaceMovingPlatformsRandomly(Game *game, const LevelDef *L,
+                                         int targetCount)
+{
+    int placed = 0;
+
+    for (int attempt = 0; attempt < 300 && placed < targetCount; attempt++) {
+        /* Smaller platforms */
+        float w = (float)GetRandomValue(70, 100);
+        float h = 16.0f;
+
+        float x1 = (float)GetRandomValue(60, L->worldW - (int)w - 60);
+        float y1 = (float)GetRandomValue(80, L->worldH - 200);
+
+        /* Short travel — axis 0 = horizontal, 1 = vertical, 2 = diagonal */
+        int   axis = GetRandomValue(0, 2);
+        float dx = 0, dy = 0;
+
+        if (axis == 0) {
+            dx = (float)GetRandomValue(40, 70);
+            if (GetRandomValue(0, 1) == 0) dx = -dx;
+        } else if (axis == 1) {
+            dy = (float)GetRandomValue(30, 55);
+            if (GetRandomValue(0, 1) == 0) dy = -dy;
+        } else {
+            dx = (float)GetRandomValue(30, 50);
+            dy = (float)GetRandomValue(20, 40);
+            if (GetRandomValue(0, 1) == 0) dx = -dx;
+            if (GetRandomValue(0, 1) == 0) dy = -dy;
+        }
+
+        Rectangle startRect = { x1,      y1,      w, h };
+        Rectangle endRect   = { x1 + dx, y1 + dy, w, h };
+
+        float minX = fminf(startRect.x, endRect.x) - 16.0f;
+        float minY = fminf(startRect.y, endRect.y) - 16.0f;
+        float maxX = fmaxf(startRect.x + w, endRect.x + w) + 16.0f;
+        float maxY = fmaxf(startRect.y + h, endRect.y + h) + 16.0f;
+        Rectangle swept = { minX, minY, maxX - minX, maxY - minY };
+
+        if (!MovingPlatformPlacementSafe(game, L, swept)) continue;
+
+        /* Slightly faster per-unit speed keeps the slower, shorter
+         * travel visually interesting without a huge footprint. */
+        float speed = 0.25f + (float)GetRandomValue(0, 15) / 100.0f;
+        if (MovingPlatform_Add(game->movingPlatforms, startRect, endRect, speed))
+            placed++;
+    }
+}
+
+/* ============================================================
  *  Save / Load progress
  * ============================================================ */
 
@@ -1271,11 +1440,21 @@ void Game_LoadLevel(Game *game, int idx) {
     Shard_InitAll(game->shards);
     Enemy_InitAll(game->enemies);
     EnemyProjectile_InitAll(game->enemyProjectiles);
+    JumpPad_InitAll(game->jumppads);
+    Spike_InitAll(game->spikes);
+    MovingPlatform_InitAll(game->movingPlatforms);
 
     Frozen_Init(&game->frozen);
     Particle_InitAll(&game->particles);
 
     SpawnEnemiesForLevel(game, L);
+
+    PlaceJumppadsRandomly(game, L);
+    PlaceSpikesRandomly(game, L);
+
+    int movingTarget = 1 + (idx / 8);
+    if (movingTarget > 3) movingTarget = 3;
+    PlaceMovingPlatformsRandomly(game, L, movingTarget);
 
     game->active             = true;
     game->state              = GAME_STATE_PLAYING;
@@ -1398,7 +1577,10 @@ void Game_Init(Game *game) {
     game->active               = false;
     game->levelCompleteTimer   = 0.0f;
     game->levelTimer           = 0.0f;
-    game->frameCounter = 0.0f;
+    game->frameCounter         = 0.0f;
+    MovingPlatform_InitAll(game->movingPlatforms);
+    JumpPad_InitAll(game->jumppads);
+    Spike_InitAll(game->spikes);
     game->state                = GAME_STATE_MENU;
     game->camera               = (Camera2D){ 0 };
 }
@@ -1431,37 +1613,88 @@ void Game_Update(Game *game) {
 
     const LevelDef *L = &LEVELS[game->currentLevel];
 
-    Jack_Update(&game->players[0], game->platforms, game->ladders, &P1_CONTROLS,
-                L->worldW, L->worldH);
-    Jack_Update(&game->players[1], game->platforms, game->ladders, &P2_CONTROLS,
-                L->worldW, L->worldH);
+    /* --- 1. Move moving platforms and animate jumppads --- */
+    MovingPlatform_UpdateAll(game->movingPlatforms, dt);
+    JumpPad_UpdateAll(game->jumppads, dt);
 
-    /* ----- Freeze the world under / around each living player ----- */
-float radiusPx = FROZEN_RADIUS_TILES * FROZEN_TILE_SIZE;
+    /* --- 2. Carry players standing on a moving platform ---
+     *
+     *  For every player whose feet are within a small tolerance of a
+     *  platform's PREVIOUS top edge (i.e. they were standing on it
+     *  before this frame's platform move), shift them by the exact
+     *  delta the platform just moved. This makes them ride along
+     *  horizontally, vertically, or diagonally with the platform. */
+    for (int p = 0; p < PLAYER_COUNT; p++) {
+        Jack *j = &game->players[p];
+        if (!Jack_IsPlayable(j))    continue;
+        if (!j->onGround)           continue;
 
-for (int p = 0; p < PLAYER_COUNT; p++) {
-    Jack *j = &game->players[p];
-    if (j->state != JACK_STATE_ALIVE) continue;
+        /* Player feet Y before applying any platform delta */
+        float feetY = j->position.y + j->radiusY;
 
-    /* Freeze circle around the player's feet. */
-    Vector2 feet = { j->position.x, j->position.y + j->radiusY };
-    Frozen_FreezeCircle(&game->frozen, feet, radiusPx);
+        for (int m = 0; m < MAX_MOVING_PLATFORMS; m++) {
+            MovingPlatform *mp = &game->movingPlatforms[m];
+            if (!mp->active) continue;
 
-    /* Spawn icy particles when moving horizontally on ground or climbing. */
-    bool moving = IsKeyDown(
-        p == 0 ? KEY_A : KEY_LEFT) || IsKeyDown(p == 0 ? KEY_D : KEY_RIGHT);
+            /* Use the platform's PREVIOUS bounds for the standing test
+             * — that's where the player was actually standing before
+             * the platform moved this frame. */
+            float platLeft   = mp->prevPos.x;
+            float platTop    = mp->prevPos.y;
+            float platRight  = platLeft + mp->bounds.width;
 
-    if (moving || j->climbing) {
-        Particle_SpawnIcy(&game->particles, feet, 30.0f);
+            if (j->position.x < platLeft)  continue;
+            if (j->position.x > platRight) continue;
+
+            /* Feet must be within tolerance of the platform's top edge.
+             * 14 px gives plenty of slack for the +/- 1 px landing snap. */
+            if (fabsf(feetY - platTop) > 14.0f) continue;
+
+            /* Apply the platform's exact delta to the player */
+            j->position.x += mp->bounds.x - mp->prevPos.x;
+            j->position.y += mp->bounds.y - mp->prevPos.y;
+
+            /* Kill any residual vertical velocity — the player is on
+             * the platform, not falling through it. */
+            if (j->velocityY > 0.0f) j->velocityY = 0.0f;
+
+            break;
+        }
     }
-}
 
-Particle_UpdateAll(&game->particles, GetFrameTime());
+    /* --- 3. Players --- */
+    Jack_Update(&game->players[0], game->platforms, game->ladders,
+                game->movingPlatforms, &P1_CONTROLS,
+                L->worldW, L->worldH);
+    Jack_Update(&game->players[1], game->platforms, game->ladders,
+                game->movingPlatforms, &P2_CONTROLS,
+                L->worldW, L->worldH);
 
+    /* --- 4. Freeze / particles --- */
+    float radiusPx = FROZEN_RADIUS_TILES * FROZEN_TILE_SIZE;
 
+    for (int p = 0; p < PLAYER_COUNT; p++) {
+        Jack *j = &game->players[p];
+        if (j->state != JACK_STATE_ALIVE) continue;
+
+        Vector2 feet = { j->position.x, j->position.y + j->radiusY };
+        Frozen_FreezeCircle(&game->frozen, feet, radiusPx);
+
+        bool moving = IsKeyDown(p == 0 ? KEY_A : KEY_LEFT) ||
+                      IsKeyDown(p == 0 ? KEY_D : KEY_RIGHT);
+
+        if (moving || j->climbing) {
+            Particle_SpawnIcy(&game->particles, feet, 30.0f);
+        }
+    }
+
+    Particle_UpdateAll(&game->particles, dt);
+
+    /* --- 5. Shards --- */
     Shard_UpdateAll(game->shards, L->worldW);
     ResolveShardPlatformCollisions(game);
 
+    /* --- 6. Player arrays --- */
     Vector2   playerPositions[PLAYER_COUNT];
     Rectangle playerHitboxes [PLAYER_COUNT];
     for (int p = 0; p < PLAYER_COUNT; p++) {
@@ -1474,27 +1707,79 @@ Particle_UpdateAll(&game->particles, GetFrameTime());
         };
     }
 
+    /* --- 7. Enemies --- */
     Rectangle nullHitboxes[PLAYER_COUNT];
-    for (int p = 0; p < PLAYER_COUNT; p++) {
+    for (int p = 0; p < PLAYER_COUNT; p++)
         nullHitboxes[p] = (Rectangle){ -10000, -10000, 0, 0 };
-    }
+
     Enemy_UpdateAll(game->enemies, playerPositions, nullHitboxes,
                     PLAYER_COUNT, game->enemyProjectiles);
 
     EnemyProjectile_UpdateAll(game->enemyProjectiles, nullHitboxes,
                               PLAYER_COUNT, L->worldW, L->worldH);
 
+    /* --- 8. Player vs enemy / projectile --- */
     ApplyPlayerThreatCollisions(game, playerHitboxes);
 
+    /* --- 9. Jumppads — players --- */
+    for (int p = 0; p < PLAYER_COUNT; p++) {
+        Jack *j = &game->players[p];
+        if (!Jack_IsPlayable(j)) continue;
+
+        Rectangle jr = {
+            j->position.x - j->radiusX,
+            j->position.y - j->radiusY,
+            j->radiusX * 2,
+            j->radiusY * 2
+        };
+        if (JumpPad_TryTrigger(game->jumppads, jr)) {
+            j->velocityY = -JUMPPAD_LAUNCH_VY;
+            j->onGround  = false;
+        }
+    }
+
+    /* --- 10. Jumppads — enemies --- */
+    for (int e = 0; e < MAX_ENEMIES; e++) {
+        Enemy *en = &game->enemies[e];
+        if (!en->active)          continue;
+        if (en->airborne)         continue;
+        if (en->stunTimer > 0.0f) continue;
+
+        Rectangle er = Enemy_GetRect(en);
+        if (JumpPad_TryTrigger(game->jumppads, er)) {
+            en->velocityY = -JUMPPAD_LAUNCH_VY;
+            en->airborne  = true;
+        }
+    }
+
+    /* --- 11. Spikes — players --- */
+    for (int p = 0; p < PLAYER_COUNT; p++) {
+        Jack *j = &game->players[p];
+        if (!Jack_IsVulnerable(j)) continue;
+
+        Rectangle jr = {
+            j->position.x - j->radiusX * 0.75f,
+            j->position.y - j->radiusY * 0.75f,
+            j->radiusX * 1.5f,
+            j->radiusY * 1.5f
+        };
+        if (Spike_OverlapsRect(game->spikes, jr)) {
+            Jack_Hit(j);
+        }
+    }
+
+    /* --- 12. Game over --- */
     if (game->players[0].state == JACK_STATE_GONE &&
         game->players[1].state == JACK_STATE_GONE) {
         game->active = false;
         return;
     }
 
+    /* --- 13. Shard ↔ enemy / projectile --- */
     ResolveShardEnemyCollisions(game);
     ResolveShardProjectileCollisions(game);
 
+    /* --- 14. Shooting --- */
     if (IsKeyPressed(KEY_E) && Jack_IsPlayable(&game->players[0])) {
         Shard_Shoot(game->shards, game->players[0].position,
                     game->players[0].facingDir);
@@ -1506,7 +1791,7 @@ Particle_UpdateAll(&game->particles, GetFrameTime());
         Jack_TriggerShoot(&game->players[1]);
     }
 
-    /* Survival timer */
+    /* --- 15. Survival timer --- */
     game->levelTimer -= dt;
     if (game->levelTimer <= 0.0f) {
         game->levelTimer = 0.0f;
@@ -1520,6 +1805,8 @@ Particle_UpdateAll(&game->particles, GetFrameTime());
     UpdateCameraForLevel(game, dt);
 }
 
+
+
 void Game_Draw(const Game *game) {
     DrawBackgroundImage(game);
 
@@ -1528,6 +1815,9 @@ void Game_Draw(const Game *game) {
 
             Ladder_DrawAll(game->ladders, &game->frozen);
             Platform_DrawAll(game->platforms, &game->frozen);
+            MovingPlatform_DrawAll(game->movingPlatforms);
+            JumpPad_DrawAll(game->jumppads);
+            Spike_DrawAll(game->spikes);
             Shard_DrawAll(game->shards);
             Enemy_DrawAll(game->enemies);
             EnemyProjectile_DrawAll(game->enemyProjectiles);

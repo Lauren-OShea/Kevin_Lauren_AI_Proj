@@ -3,6 +3,7 @@
 
 #include "raylib.h"
 #include "platform.h"
+#include "movingplatform.h"
 
 #define JACK_ANIM_COUNT     4
 #define SPRITE_SCALE        1.5f
@@ -15,7 +16,7 @@ typedef struct JackControls {
     int right;
     int up;
     int down;
-    int jump;   /* dedicated jump key */
+    int jump;
 } JackControls;
 
 typedef enum JackAnim {
@@ -40,7 +41,7 @@ typedef struct PlayerSprites {
 
 typedef struct Jack {
     Vector2 position;
-    Vector2 spawnPosition;   
+    Vector2 spawnPosition;
 
     float   radiusX;
     float   radiusY;
@@ -53,10 +54,9 @@ typedef struct Jack {
     float   facingDir;
     bool    onGround;
 
-    /* ----- Ladder state ----- */
-    bool    onLadder;      /* currently overlapping a ladder */
-    bool    climbing;      /* attached and climbing */
-    int     ladderIndex;   /* index into ladders[] while attached, else -1 */
+    bool    onLadder;
+    bool    climbing;
+    int     ladderIndex;
 
     JackState state;
     JackAnim  currentAnim;
@@ -73,10 +73,14 @@ void PlayerSprites_Load  (PlayerSprites *sprites);
 void PlayerSprites_Unload(PlayerSprites *sprites);
 
 void Jack_Init  (Jack *jack, Vector2 startPos, Color tintColor);
+
 void Jack_Update(Jack *jack,
-                 const Platform platforms[MAX_PLATFORMS],
-                 const Ladder   ladders[MAX_LADDERS],
-                 const JackControls *controls, int worldW, int worldH);
+                 const Platform       platforms[MAX_PLATFORMS],
+                 const Ladder         ladders[MAX_LADDERS],
+                 const MovingPlatform movingPlatforms[MAX_MOVING_PLATFORMS],
+                 const JackControls  *controls,
+                 int worldW, int worldH);
+
 void Jack_Draw  (const Jack *jack, const PlayerSprites *sprites);
 
 void Jack_TriggerShoot(Jack *jack);

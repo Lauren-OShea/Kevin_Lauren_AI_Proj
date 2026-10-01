@@ -170,7 +170,6 @@ static inline float Jack_Bottom(const Jack *j) {
     return j->position.y + j->radiusY;
 }
 
-/* Returns index of ladder the player's box overlaps, or -1. */
 static int FindOverlappingLadder(const Jack *jack,
                                  const Ladder ladders[MAX_LADDERS],
                                  float expandX, float expandY)
@@ -190,16 +189,17 @@ static int FindOverlappingLadder(const Jack *jack,
 }
 
 void Jack_Update(Jack *jack,
-                 const Platform platforms[MAX_PLATFORMS],
-                 const Ladder   ladders[MAX_LADDERS],
-                 const JackControls *controls, 
+                 const Platform       platforms[MAX_PLATFORMS],
+                 const Ladder         ladders[MAX_LADDERS],
+                 const MovingPlatform movingPlatforms[MAX_MOVING_PLATFORMS],
+                 const JackControls  *controls,
                  int worldW, int worldH)
 {
     float dt = GetFrameTime();
     Vector2 prevPosition = jack->position;
 
     /* ============================================================
-     *  Flung off-screen - fly, then disappear
+     *  Flung off-screen — fly, then disappear
      * ============================================================ */
     if (jack->state == JACK_STATE_FLUNG) {
         jack->velocityY += jack->gravity;
@@ -224,9 +224,8 @@ void Jack_Update(Jack *jack,
      *  Ladder logic (alive only)
      * ============================================================ */
     bool jumpPressed = IsKeyPressed(controls->jump) ||
-                       IsKeyPressed(controls->up);   /* up also jumps when not on ladder */
+                       IsKeyPressed(controls->up);
 
-    /* --- Try to grab a ladder --- */
     if (!jack->climbing) {
         int idx = FindOverlappingLadder(jack, ladders, 2.0f, 2.0f);
         if (idx >= 0) {
@@ -237,101 +236,87 @@ void Jack_Update(Jack *jack,
             jack->ladderIndex = -1;
         }
     } else {
-        /* While climbing, verify we're still on the same ladder. */
         if (jack->ladderIndex < 0 ||
             !ladders[jack->ladderIndex].active) {
             jack->climbing    = false;
             jack->onLadder    = false;
             jack->ladderIndex = -1;
         } else {
-            /* Keep attached even if we drift slightly off. */
             jack->onLadder = true;
         }
     }
 
-    /* --- Enter climb when pressing up/down on a ladder --- */
     if (!jack->climbing && jack->onLadder) {
         if (IsKeyDown(controls->up) || IsKeyDown(controls->down)) {
-            jack->climbing = true;
-            jack->onGround = false;
+            jack->climbing  = true;
+            jack->onGround  = false;
             jack->velocityY = 0.0f;
         }
     }
 
-    /* --- Climbing state --- */
-    /* --- Climbing state --- */
-if (jack->climbing && jack->ladderIndex >= 0) {
-    const Ladder *L = &ladders[jack->ladderIndex];
-    Rectangle lb = L->bounds;
+    if (jack->climbing && jack->ladderIndex >= 0) {
+        const Ladder *L = &ladders[jack->ladderIndex];
+        Rectangle lb = L->bounds;
 
-    /* Horizontal input dismounts */
-    bool leftPressed  = IsKeyDown(controls->left);
-    bool rightPressed = IsKeyDown(controls->right);
+        bool leftPressed  = IsKeyDown(controls->left);
+        bool rightPressed = IsKeyDown(controls->right);
 
-    if (leftPressed || rightPressed) {
-        jack->climbing = false;
-        jack->onLadder = false;
-        jack->ladderIndex = -1;
-    } else if (jumpPressed) {
-        jack->climbing  = false;
-        jack->onLadder  = false;
-        jack->ladderIndex = -1;
-        jack->velocityY = -jack->jumpForce;
-        jack->onGround  = false;
-    } else {
-        /* Snap X to ladder centre */
-        jack->position.x = lb.x + lb.width * 0.5f;
-
-        /* Vertical climbing input */
-        float climb = 0.0f;
-        if (IsKeyDown(controls->up))   climb -= LADDER_CLIMB_SPEED;
-        if (IsKeyDown(controls->down)) climb += LADDER_CLIMB_SPEED;
-
-        jack->position.y += climb * dt;
-        jack->velocityY   = 0.0f;
-        jack->onGround    = false;
-
-        /* --- Find the platform the ladder belongs to (its top edge).
-         * The ladder top was generated as (upperPlatform.y - 4). So
-         * the platform top is approximately lb.y + 4. --- */
-        float platformTopY = lb.y + 4.0f;
-
-        /* --- Reached the top: put the player's FEET on the platform. --- */
-        if (Jack_Bottom(jack) <= platformTopY + 2.0f) {
-            jack->position.y = platformTopY - jack->radiusY;
+        if (leftPressed || rightPressed) {
             jack->climbing    = false;
             jack->onLadder    = false;
             jack->ladderIndex = -1;
-            jack->onGround    = true;
+        } else if (jumpPressed) {
+            jack->climbing    = false;
+            jack->onLadder    = false;
+            jack->ladderIndex = -1;
+            jack->velocityY   = -jack->jumpForce;
+            jack->onGround    = false;
+        } else {
+            jack->position.x = lb.x + lb.width * 0.5f;
+
+            float climb = 0.0f;
+            if (IsKeyDown(controls->up))   climb -= LADDER_CLIMB_SPEED;
+            if (IsKeyDown(controls->down)) climb += LADDER_CLIMB_SPEED;
+
+            jack->position.y += climb * dt;
             jack->velocityY   = 0.0f;
+            jack->onGround    = false;
+
+            float platformTopY = lb.y + 4.0f;
+
+            if (Jack_Bottom(jack) <= platformTopY + 2.0f) {
+                jack->position.y  = platformTopY - jack->radiusY;
+                jack->climbing    = false;
+                jack->onLadder    = false;
+                jack->ladderIndex = -1;
+                jack->onGround    = true;
+                jack->velocityY   = 0.0f;
+                return;
+            }
+
+            float bottom = lb.y + lb.height;
+            if (Jack_Bottom(jack) >= bottom) {
+                jack->position.y = bottom - jack->radiusY;
+                jack->onGround   = true;
+            }
+
+            jack->animTimer += dt;
+            if (jack->invulnTimer > 0.0f) {
+                jack->invulnTimer -= dt;
+                if (jack->invulnTimer < 0.0f) jack->invulnTimer = 0.0f;
+            }
+            if (jack->shootTimer > 0.0f) {
+                jack->shootTimer -= dt;
+                if (jack->shootTimer < 0.0f) jack->shootTimer = 0.0f;
+            }
+
+            if (jack->currentAnim != JACK_ANIM_WALK) {
+                jack->currentAnim = JACK_ANIM_WALK;
+                jack->animTimer   = 0.0f;
+            }
             return;
         }
-
-        /* --- Bottom of ladder: sit on the lower platform, stay attached --- */
-        float bottom = lb.y + lb.height;
-        if (Jack_Bottom(jack) >= bottom) {
-            jack->position.y = bottom - jack->radiusY;
-            jack->onGround   = true;
-        }
-
-        /* Animation timers */
-        jack->animTimer += dt;
-        if (jack->invulnTimer > 0.0f) {
-            jack->invulnTimer -= dt;
-            if (jack->invulnTimer < 0.0f) jack->invulnTimer = 0.0f;
-        }
-        if (jack->shootTimer > 0.0f) {
-            jack->shootTimer -= dt;
-            if (jack->shootTimer < 0.0f) jack->shootTimer = 0.0f;
-        }
-
-        if (jack->currentAnim != JACK_ANIM_WALK) {
-            jack->currentAnim = JACK_ANIM_WALK;
-            jack->animTimer   = 0.0f;
-        }
-        return;
     }
-}
 
     /* ============================================================
      *  Normal alive behaviour
@@ -351,7 +336,7 @@ if (jack->climbing && jack->ladderIndex >= 0) {
     }
 
     /* ------------------------------------------------------------
-     *  Horizontal platform collision
+     *  Horizontal platform collision — STATIC platforms
      * ------------------------------------------------------------ */
     for (int i = 0; i < MAX_PLATFORMS; i++) {
         if (!platforms[i].active) continue;
@@ -398,11 +383,7 @@ if (jack->climbing && jack->ladderIndex >= 0) {
     jack->position.y += jack->velocityY;
     bool landed = false;
 
-    /* ---------- One-way landing ----------
-     * Requires the player's CENTER to be horizontally over the
-     * platform. Without this, the player can "land on air" when
-     * their wide AABB spans a narrow gap between two adjacent
-     * platforms even though their body is centered in the gap. */
+    /* ---------- One-way landing — STATIC platforms ---------- */
     if (jack->velocityY >= 0.0f) {
         for (int i = 0; i < MAX_PLATFORMS; i++) {
             if (!platforms[i].active) continue;
@@ -417,6 +398,25 @@ if (jack->climbing && jack->ladderIndex >= 0) {
                 jack->onGround   = true;
                 landed = true;
                 break;
+            }
+        }
+
+        /* ---------- One-way landing — MOVING platforms ---------- */
+        if (!landed) {
+            for (int i = 0; i < MAX_MOVING_PLATFORMS; i++) {
+                if (!movingPlatforms[i].active) continue;
+                Rectangle p = movingPlatforms[i].bounds;
+
+                if (jack->position.x < p.x)             continue;
+                if (jack->position.x > p.x + p.width)   continue;
+
+                if (beforeBottomMove <= p.y + 1.0f && Jack_Bottom(jack) >= p.y) {
+                    jack->position.y = p.y - jack->radiusY;
+                    jack->velocityY  = 0.0f;
+                    jack->onGround   = true;
+                    landed = true;
+                    break;
+                }
             }
         }
     }

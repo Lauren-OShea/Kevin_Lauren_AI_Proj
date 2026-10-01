@@ -41,17 +41,19 @@ typedef enum EnemyType {
 typedef struct Enemy {
     EnemyType type;
     Vector2   position;
-    float     baseY;        /* flyer vertical anchor */
+    float     baseY;
     float     speed;
     float     dir;
     float     patrolLeft;
     float     patrolRight;
-    float     phase;        /* walk bob */
-    float     flyPhase;     /* flyer float */
+    float     phase;
+    float     flyPhase;
     float     stunTimer;
     float     shootCooldown;
-    float     dashTimer;    /* dasher: seconds until next dash */
-    float     dashActive;   /* dasher: seconds remaining in dash */
+    float     dashTimer;
+    float     dashActive;
+    float     velocityY;
+    bool      airborne;
     bool      active;
 } Enemy;
 
