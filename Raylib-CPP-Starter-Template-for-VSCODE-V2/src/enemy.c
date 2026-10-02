@@ -55,6 +55,7 @@ static bool Enemy_SpawnInternal(Enemy enemies[MAX_ENEMIES],
                                        (0.5f + (float)GetRandomValue(0, 50) / 100.0f);
             enemies[i].baseY         = platform.y;
             enemies[i].velocityY     = 0.0f;
+            enemies[i].jumpCooldown  = 0.0f;
             enemies[i].airborne      = false;
 
             switch (type) {
@@ -130,6 +131,7 @@ bool Enemy_PlaceDirect(Enemy enemies[MAX_ENEMIES], Vector2 position,
             enemies[i].dashActive    = 0.0f;
             enemies[i].dashTimer     = ENEMY_DASH_COOLDOWN;
             enemies[i].velocityY     = 0.0f;
+            enemies[i].jumpCooldown  = 0.0f;
             enemies[i].airborne      = false;
             enemies[i].active        = true;
             return true;
@@ -137,6 +139,7 @@ bool Enemy_PlaceDirect(Enemy enemies[MAX_ENEMIES], Vector2 position,
     }
     return false;
 }
+
 /* ============================================================
  *  Enemy — update
  * ============================================================ */
@@ -178,6 +181,13 @@ bool Enemy_UpdateAll(Enemy enemies[MAX_ENEMIES],
     for (int i = 0; i < MAX_ENEMIES; i++) {
         if (!enemies[i].active) continue;
 
+        /* ---- Tick down the jumppad cooldown ---- */
+        if (enemies[i].jumpCooldown > 0.0f) {
+            enemies[i].jumpCooldown -= dt;
+            if (enemies[i].jumpCooldown < 0.0f)
+                enemies[i].jumpCooldown = 0.0f;
+        }
+
         /* ---- Stunned: frozen, harmless, doesn't shoot ---- */
         if (enemies[i].stunTimer > 0.0f) {
             enemies[i].stunTimer -= dt;
@@ -192,9 +202,17 @@ bool Enemy_UpdateAll(Enemy enemies[MAX_ENEMIES],
 
             if (enemies[i].velocityY > 0.0f &&
                 enemies[i].position.y >= enemies[i].baseY) {
-                enemies[i].position.y = enemies[i].baseY;
-                enemies[i].velocityY  = 0.0f;
-                enemies[i].airborne   = false;
+                enemies[i].position.y  = enemies[i].baseY;
+                enemies[i].velocityY   = 0.0f;
+                enemies[i].airborne    = false;
+
+                /* Reverse so the enemy walks away from the pad
+                 * it just bounced off instead of re-triggering. */
+                enemies[i].dir = -enemies[i].dir;
+
+                /* Brief cooldown so we don't re-trigger the same pad
+                 * if the enemy landed right on top of it. */
+                enemies[i].jumpCooldown = 0.75f;
             }
             continue;
         }
@@ -436,9 +454,6 @@ void Enemy_DrawAll(const Enemy enemies[MAX_ENEMIES]) {
             }
 
             Color eye = (Color){ 20, 10, 40, 255 };
-
-            DrawEllipse((int)x, (int)(baseY + ENEMY_FLY_SPAWN_UP + 1),
-                        10, 3, (Color){ 0, 0, 0, 60 });
 
             float bodyCY = baseY - 18 + bob;
 
