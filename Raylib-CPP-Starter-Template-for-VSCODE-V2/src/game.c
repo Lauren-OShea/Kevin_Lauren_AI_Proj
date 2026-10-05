@@ -8,6 +8,7 @@ static void BuildLadders(Game *game);
 static bool LadderBlockedByPlatform(const Game *game,
                                     float x0, float x1,
                                     float topY, float bottomY);
+static void MarkFreezableTiles(Game *game);
 
 /* ============================================================
  *  Level data
@@ -717,11 +718,12 @@ static void PlaceMovingPlatformsRandomly(Game *game, const LevelDef *L,
  * ============================================================ */
 
 static void SaveProgress(const Game *game) {
-    unsigned char buf[MAX_TOTAL_LEVELS];
+    unsigned char buf[MAX_TOTAL_LEVELS * 2];
     for (int i = 0; i < MAX_TOTAL_LEVELS; i++) {
-        buf[i] = game->levelCompleted[i] ? 1 : 0;
+        buf[i]                    = game->levelCompleted[i] ? 1 : 0;
+        buf[i + MAX_TOTAL_LEVELS] = game->levelStars[i];
     }
-    if (!SaveFileData("save.dat", buf, MAX_TOTAL_LEVELS)) {
+    if (!SaveFileData("save.dat", buf, sizeof(buf))) {
         TraceLog(LOG_WARNING, "Could not write save.dat");
     }
 }
@@ -731,19 +733,28 @@ static void LoadProgress(Game *game) {
     unsigned char *data = LoadFileData("save.dat", &size);
 
     if (!data) {
-        TraceLog(LOG_INFO, "No save file found — starting fresh.");
+        TraceLog(LOG_INFO, "No save file found - starting fresh.");
         return;
     }
 
     if (size == MAX_TOTAL_LEVELS) {
         for (int i = 0; i < MAX_TOTAL_LEVELS; i++) {
             game->levelCompleted[i] = (data[i] != 0);
+            game->levelStars[i]     = data[i] ? 1 : 0;
+        }
+        TraceLog(LOG_INFO, "Progress loaded (legacy format).");
+    } else if (size == MAX_TOTAL_LEVELS * 2) {
+        for (int i = 0; i < MAX_TOTAL_LEVELS; i++) {
+            game->levelCompleted[i] = (data[i] != 0);
+            game->levelStars[i]     = data[i + MAX_TOTAL_LEVELS];
+            if (game->levelStars[i] > MAX_STARS)
+                game->levelStars[i] = MAX_STARS;
         }
         TraceLog(LOG_INFO, "Progress loaded.");
     } else {
         TraceLog(LOG_WARNING,
-                 "Save size mismatch (%d, expected %d). Ignored.",
-                 size, MAX_TOTAL_LEVELS);
+                 "Save size mismatch (%d, expected %d or %d). Ignored.",
+                 size, MAX_TOTAL_LEVELS, MAX_TOTAL_LEVELS * 2);
     }
     UnloadFileData(data);
 }
@@ -808,6 +819,41 @@ static void DrawAnimatedOverlay(void) {
 }
 
 /* ============================================================
+ *  Stars
+ * ============================================================ */
+
+static void DrawStarShape(float cx, float cy, float outerR,
+                          Color col, bool filled)
+{
+    Vector2 outer[5];
+    Vector2 inner[5];
+
+    for (int i = 0; i < 5; i++) {
+        float angO = -PI / 2.0f + i * (2.0f * PI / 5.0f);
+        float angI = angO + PI / 5.0f;
+        outer[i] = (Vector2){ cx + cosf(angO) * outerR,
+                              cy + sinf(angO) * outerR };
+        inner[i] = (Vector2){ cx + cosf(angI) * outerR * 0.42f,
+                              cy + sinf(angI) * outerR * 0.42f };
+    }
+
+    if (filled) {
+        for (int i = 0; i < 5; i++) {
+            int n = (i + 1) % 5;
+            DrawTriangle((Vector2){ cx, cy }, outer[i], outer[n], col);
+            DrawTriangle(outer[i], inner[i], outer[n], col);
+            DrawTriangle(inner[i], (Vector2){ cx, cy }, outer[n], col);
+        }
+    } else {
+        for (int i = 0; i < 5; i++) {
+            int n = (i + 1) % 5;
+            DrawLineEx(outer[i], inner[i], 2.0f, col);
+            DrawLineEx(inner[i], outer[n], 2.0f, col);
+        }
+    }
+}
+
+/* ============================================================
  *  HUD
  * ============================================================ */
 
@@ -835,24 +881,72 @@ static void DrawHUD(const Game *game) {
     DrawLivesRow(game->players[1].lives, p2StartX, 92,
                  (Color){ 255, 110, 110, 255 });
 
+    /* ---- Timer ---- */
     float remaining = game->levelTimer;
     if (remaining < 0.0f) remaining = 0.0f;
 
-    const char *timeStr = TextFormat("%.1f", remaining);
+    int secs = (int)ceilf(remaining);
+    const char *timeStr = TextFormat("%d", secs);
     int  tf = 54;
     int  tw = MeasureText(timeStr, tf);
     int  tx = SCREEN_WIDTH / 2 - tw / 2;
     int  ty = 14;
 
     Color timeCol;
-    if (remaining <= 1.0f)      timeCol = (Color){ 255,  90,  90, 255 };
-    else if (remaining <= 2.5f) timeCol = (Color){ 255, 180,  90, 255 };
-    else                        timeCol = (Color){ 232, 245, 255, 255 };
+    if      (secs <= 5)  timeCol = (Color){ 255,  90,  90, 255 };
+    else if (secs <= 15) timeCol = (Color){ 255, 180,  90, 255 };
+    else                 timeCol = (Color){ 232, 245, 255, 255 };
 
-    DrawText("SURVIVE", SCREEN_WIDTH / 2 - MeasureText("SURVIVE", 16) / 2,
+    DrawText("TIME", SCREEN_WIDTH / 2 - MeasureText("TIME", 16) / 2,
              2, 16, (Color){ 200, 220, 240, 220 });
     DrawText(timeStr, tx + 2, ty + 2, tf, (Color){ 0, 0, 0, 120 });
     DrawText(timeStr, tx,     ty,     tf, timeCol);
+
+    /* ---- Team stars ---- */
+    {
+        float spacing = 34.0f;
+        float startX  = SCREEN_WIDTH * 0.5f - spacing;
+        float cy      = 92.0f;
+
+        for (int i = 0; i < MAX_STARS; i++) {
+            bool  alive = (i < game->starsRemaining);
+            float pop   = 1.0f;
+
+            if (game->starPopTimer > 0.0f && alive) {
+                float u = game->starPopTimer / 0.6f;
+                pop = 1.0f + 0.35f * u;
+            }
+
+            Color col  = alive ? (Color){ 255, 220,  80, 255 }
+                               : (Color){  60,  70,  90, 200 };
+            Color glow = alive ? (Color){ 255, 240, 160, 100 }
+                               : (Color){ 0, 0, 0, 0 };
+
+            float cx = startX + i * spacing;
+            if (alive) DrawCircle((int)cx, (int)cy, 22.0f * pop, glow);
+            DrawStarShape(cx, cy, 16.0f * pop, col, alive);
+            DrawStarShape(cx, cy, 16.0f * pop,
+                          (Color){ 30, 30, 55, 255 }, false);
+        }
+    }
+
+    /* ---- Freeze progress (with counts) ---- */
+    {
+        int total = 0, done = 0;
+        for (int r = 0; r < FROZEN_ROWS; r++) {
+            for (int c = 0; c < FROZEN_COLS; c++) {
+                if (!game->freezableMask[r][c]) continue;
+                total++;
+                if (Frozen_IsCellFrozen(&game->frozen, c, r)) done++;
+            }
+        }
+        int pct = (total > 0) ? (done * 100) / total : 100;
+        const char *prog = TextFormat("FROZEN: %d%%  (%d / %d)",
+                                      pct, done, total);
+        DrawText(prog,
+                 SCREEN_WIDTH / 2 - MeasureText(prog, 18) / 2,
+                 130, 18, (Color){ 200, 230, 255, 220 });
+    }
 
     DrawText("P1: A/D  SPACE  E",
              20, SCREEN_HEIGHT - 26, 16, (Color){ 200, 220, 240, 200 });
@@ -863,10 +957,52 @@ static void DrawHUD(const Game *game) {
     if (game->levelCompleteTimer > 0.0f) {
         const char *msg = "LEVEL COMPLETE!";
         int fs = 48;
-        DrawText(msg,
-                 SCREEN_WIDTH / 2 - MeasureText(msg, fs) / 2,
-                 SCREEN_HEIGHT / 2 - fs / 2, fs,
-                 (Color){ 240, 250, 255, 240 });
+        int msgY = SCREEN_HEIGHT / 2 - 120;
+        DrawText(msg, SCREEN_WIDTH / 2 - MeasureText(msg, fs) / 2,
+                 msgY, fs, (Color){ 240, 250, 255, 240 });
+
+        float t = game->levelCompleteAnim;
+
+        Rectangle panel = {
+            SCREEN_WIDTH / 2 - 200.0f,
+            SCREEN_HEIGHT / 2 - 60.0f,
+            400.0f, 140.0f
+        };
+        DrawRectangleRounded(panel, 0.12f, 8,
+                             (Color){ 10, 20, 35, 170 });
+        DrawRectangleRoundedLines(panel, 0.12f, 8,
+                                  (Color){ 160, 200, 240, 200 });
+
+        float baseY   = SCREEN_HEIGHT / 2 + 8.0f;
+        float spacing = 90.0f;
+        float startX  = SCREEN_WIDTH / 2 - spacing;
+
+        for (int i = 0; i < MAX_STARS; i++) {
+            float local = t - i * 0.35f;
+            if (local < 0.0f) continue;
+
+            float pop = 1.0f;
+            if (local < 0.25f) {
+                float u = local / 0.25f;
+                pop = 1.0f + 0.6f * sinf(u * PI);
+            }
+
+            bool earned = (i < game->starsAwarded);
+
+            Color col  = earned ? (Color){ 255, 220,  80, 255 }
+                                : (Color){  90, 100, 120, 200 };
+            Color glow = earned ? (Color){ 255, 240, 160, 110 }
+                                : (Color){ 0, 0, 0, 0 };
+
+            float cx = startX + i * spacing;
+            float cy = baseY;
+
+            if (earned) DrawCircle((int)cx, (int)cy, 32.0f * pop, glow);
+
+            DrawStarShape(cx, cy, 28.0f * pop, col, earned);
+            DrawStarShape(cx, cy, 28.0f * pop,
+                          (Color){ 30, 30, 55, 255 }, false);
+        }
     }
 
     if (!game->active && game->levelCompleteTimer <= 0.0f) {
@@ -1262,7 +1398,10 @@ static void DrawLevelSelect(const Game *game) {
         }
 
         if (selected) {
-            fill   = (Color){ fill.r + 40, fill.g + 40, fill.b + 40, fill.a };
+            fill   = (Color){ (unsigned char)(fill.r + 40),
+                              (unsigned char)(fill.g + 40),
+                              (unsigned char)(fill.b + 40),
+                              fill.a };
             border = (Color){ 255, 255, 255, 255 };
         }
 
@@ -1270,11 +1409,31 @@ static void DrawLevelSelect(const Game *game) {
         DrawRectangleLinesEx(r, 2.5f, border);
 
         const char *num = TextFormat("%d", i + 1);
-        int  fs = 24;
+        int  fs = 22;
         DrawText(num,
                  (int)(r.x + r.width / 2) - MeasureText(num, fs) / 2,
-                 (int)(r.y + 6),
+                 (int)(r.y + 2),
                  fs, text);
+
+        if (done && !isCustom) {
+            int stars = game->levelStars[i];
+            if (stars > MAX_STARS) stars = MAX_STARS;
+
+            float spacing = 16.0f;
+            float cy      = r.y + r.height - 22.0f;
+            float cx      = r.x + r.width * 0.5f - spacing;
+
+            for (int s = 0; s < MAX_STARS; s++) {
+                bool earned = (s < stars);
+                Color col = earned ? (Color){ 255, 220,  80, 255 }
+                                   : (Color){  60,  70,  90, 200 };
+                float sx = cx + s * spacing;
+                float sy = cy;
+                DrawStarShape(sx, sy, 7.0f, col, earned);
+                DrawStarShape(sx, sy, 7.0f,
+                              (Color){ 20, 25, 40, 255 }, false);
+            }
+        }
 
         const char *name;
         int  ns = 11;
@@ -1287,9 +1446,10 @@ static void DrawLevelSelect(const Game *game) {
         }
         if (!unlocked && !isCustom) name = "LOCKED";
 
+        int nameY = (int)(r.y + r.height - 12);
         DrawText(name,
                  (int)(r.x + r.width / 2) - MeasureText(name, ns) / 2,
-                 (int)(r.y + r.height - 20),
+                 nameY,
                  ns, text);
     }
 
@@ -1323,8 +1483,9 @@ static void DrawControls(void) {
         "Player 1:  A / D to move,  Space to jump,  E to shoot",
         "Player 2:  Left / Right to move,  Up to jump,  M to shoot",
         "Stun enemies with shards - don't touch them!",
-        "Survive 5 seconds to complete the level.",
-        "You have 3 lives. If both players are out, the level fails.",
+        "Freeze every tile you can reach to complete the level.",
+        "You have 60 seconds. You lose a star every 20 seconds.",
+        "Running out of time fails the level.",
         "",
         "Level Editor:  number keys pick tools, Q/R cycle enemy type"
     };
@@ -1345,6 +1506,44 @@ static void DrawControls(void) {
 /* ============================================================
  *  Level loading / spawning
  * ============================================================ */
+
+/* Mark grid cells the player can actually touch.
+ * A cell counts only if its CENTER lies inside an active platform.
+ * No band above platforms, no phantom edge tiles, no ground fallback. */
+static void MarkFreezableTiles(Game *game) {
+    memset(game->freezableMask, 0, sizeof(game->freezableMask));
+
+    for (int i = 0; i < MAX_PLATFORMS; i++) {
+        if (!game->platforms[i].active) continue;
+
+        Rectangle p = game->platforms[i].bounds;
+
+        /* Optional forgiveness: inflate by half a tile so the tiles the
+         * player stands on the very edge of also count. Remove the four
+         * lines below if you want STRICT platform-only cells. */
+        p.x      -= FROZEN_TILE_SIZE * 0.25f;
+        p.y      -= FROZEN_TILE_SIZE * 0.25f;
+        p.width  += FROZEN_TILE_SIZE * 0.5f;
+        p.height += FROZEN_TILE_SIZE * 0.5f;
+
+        /* Only cells whose CENTER lies inside the platform */
+        int c0 = (int)ceilf ((p.x - FROZEN_TILE_SIZE * 0.5f) / FROZEN_TILE_SIZE);
+        int c1 = (int)floorf((p.x + p.width  - FROZEN_TILE_SIZE * 0.5f) / FROZEN_TILE_SIZE);
+        int r0 = (int)ceilf ((p.y - FROZEN_TILE_SIZE * 0.5f) / FROZEN_TILE_SIZE);
+        int r1 = (int)floorf((p.y + p.height - FROZEN_TILE_SIZE * 0.5f) / FROZEN_TILE_SIZE);
+
+        if (c0 < 0) c0 = 0;
+        if (r0 < 0) r0 = 0;
+        if (c1 >= FROZEN_COLS) c1 = FROZEN_COLS - 1;
+        if (r1 >= FROZEN_ROWS) r1 = FROZEN_ROWS - 1;
+
+        for (int r = r0; r <= r1; r++) {
+            for (int c = c0; c <= c1; c++) {
+                game->freezableMask[r][c] = 1;
+            }
+        }
+    }
+}
 
 static void LoadLevelPlatforms(Game *game, const LevelDef *L) {
     Platform_InitAll(game->platforms);
@@ -1461,6 +1660,29 @@ static void SpawnEnemiesForLevel(Game *game, const LevelDef *L) {
     }
 }
 
+static void CompleteLevel(Game *game) {
+    int idx = game->currentLevel;
+    if (idx < 0) idx = 0;
+    if (idx >= MAX_TOTAL_LEVELS) idx = MAX_TOTAL_LEVELS - 1;
+
+    int s = game->starsRemaining;
+    if (s < 0) s = 0;
+    if (s > MAX_STARS) s = MAX_STARS;
+
+    if (!game->levelCompleted[idx]) {
+        game->levelCompleted[idx] = true;
+        game->levelStars[idx]     = (unsigned char)s;
+    } else if (s > game->levelStars[idx]) {
+        game->levelStars[idx] = (unsigned char)s;
+    }
+
+    SaveProgress(game);
+
+    game->starsAwarded       = game->levelStars[idx];
+    game->levelCompleteAnim  = 0.0f;
+    game->levelCompleteTimer = 2.5f;
+}
+
 void Game_LoadLevel(Game *game, int idx) {
     if (idx < 0)                 idx = 0;
     if (idx >= MAX_TOTAL_LEVELS) idx = MAX_TOTAL_LEVELS - 1;
@@ -1479,7 +1701,6 @@ void Game_LoadLevel(Game *game, int idx) {
     Particle_InitAll(&game->particles);
 
     if (idx < MAX_LEVELS) {
-        /* ---------- Built-in ---------- */
         const LevelDef *L = &LEVELS[idx];
 
         for (int i = 0; i < L->nPlatforms && i < MAX_PLATFORMS; i++)
@@ -1502,7 +1723,6 @@ void Game_LoadLevel(Game *game, int idx) {
         game->currentWorldH = L->worldH;
 
     } else {
-        /* ---------- Custom ---------- */
         int slot = idx - MAX_LEVELS;
         if (slot < 0) slot = 0;
         if (slot >= MAX_CUSTOM_LEVELS) slot = MAX_CUSTOM_LEVELS - 1;
@@ -1543,12 +1763,22 @@ void Game_LoadLevel(Game *game, int idx) {
         game->currentWorldH = EDITOR_WORLD_H;
     }
 
-    game->active             = true;
-    game->state              = GAME_STATE_PLAYING;
-    game->frameCounter       = 0.0f;
-    game->levelCompleteTimer = 0.0f;
-    game->levelTimer         = 15.0f;   /* <-- CHANGED from 5.0f to 15.0f */
+    game->active              = true;
+    game->state               = GAME_STATE_PLAYING;
+    game->frameCounter        = 0.0f;
+    game->levelCompleteTimer  = 0.0f;
+    game->levelCompleteAnim   = 0.0f;
+    game->starsAwarded        = 0;
 
+    game->levelTimer     = 60.0f;
+    game->starsRemaining = MAX_STARS;
+    game->starMilestone1 = 40.0f;
+    game->starMilestone2 = 20.0f;
+    game->starLost1      = false;
+    game->starLost2      = false;
+    game->starPopTimer   = 0.0f;
+
+    MarkFreezableTiles(game);
     SnapCameraToPlayers(game);
 }
 
@@ -1656,6 +1886,8 @@ static const JackControls P2_CONTROLS = { KEY_LEFT, KEY_RIGHT, KEY_UP, KEY_DOWN,
 
 void Game_Init(Game *game) {
     memset(game->levelCompleted, 0, sizeof(game->levelCompleted));
+    memset(game->levelStars,     0, sizeof(game->levelStars));
+    memset(game->freezableMask,  0, sizeof(game->freezableMask));
 
     for (int i = 0; i < MAX_CUSTOM_LEVELS; i++) {
         Editor_InitCustomLevel(&game->customLevels[i]);
@@ -1670,12 +1902,21 @@ void Game_Init(Game *game) {
     game->score                = 0;
     game->active               = false;
     game->levelCompleteTimer   = 0.0f;
+    game->levelCompleteAnim    = 0.0f;
+    game->starsAwarded         = 0;
     game->levelTimer           = 0.0f;
     game->frameCounter         = 0.0f;
     game->currentWorldW        = 1200;
     game->currentWorldH        = 620;
     game->state                = GAME_STATE_MENU;
     game->camera               = (Camera2D){ 0 };
+
+    game->starsRemaining = MAX_STARS;
+    game->starMilestone1 = 40.0f;
+    game->starMilestone2 = 20.0f;
+    game->starLost1      = false;
+    game->starLost2      = false;
+    game->starPopTimer   = 0.0f;
 }
 
 void Game_Restart(Game *game) {
@@ -1689,6 +1930,8 @@ void Game_Update(Game *game) {
 
     if (game->levelCompleteTimer > 0.0f) {
         game->levelCompleteTimer -= dt;
+        game->levelCompleteAnim  += dt;
+
         if (game->levelCompleteTimer <= 0.0f) {
             game->levelCompleteTimer = 0.0f;
             int next = game->currentLevel + 1;
@@ -1704,11 +1947,9 @@ void Game_Update(Game *game) {
         return;
     }
 
-    /* --- 1. Move moving platforms and animate jumppads --- */
     MovingPlatform_UpdateAll(game->movingPlatforms, dt);
     JumpPad_UpdateAll(game->jumppads, dt);
 
-    /* --- 2. Carry players standing on a moving platform --- */
     for (int p = 0; p < PLAYER_COUNT; p++) {
         Jack *j = &game->players[p];
         if (!Jack_IsPlayable(j))    continue;
@@ -1726,30 +1967,25 @@ void Game_Update(Game *game) {
 
             if (j->position.x < platLeft)  continue;
             if (j->position.x > platRight) continue;
-
             if (fabsf(feetY - platTop) > 14.0f) continue;
 
             j->position.x += mp->bounds.x - mp->prevPos.x;
             j->position.y += mp->bounds.y - mp->prevPos.y;
 
             if (j->velocityY > 0.0f) j->velocityY = 0.0f;
-
             break;
         }
     }
 
-    /* --- 3. Players --- */
     Jack_Update(&game->players[0], game->platforms, game->ladders,
                 game->movingPlatforms, &P1_CONTROLS,
                 game->currentWorldW, game->currentWorldH);
     Jack_Update(&game->players[1], game->platforms, game->ladders,
                 game->movingPlatforms, &P2_CONTROLS,
                 game->currentWorldW, game->currentWorldH);
-    
-    /* --- 4. Freeze / particles --- */
+
     float radiusPx = FROZEN_RADIUS_TILES * FROZEN_TILE_SIZE;
-    
-    
+
     for (int p = 0; p < PLAYER_COUNT; p++) {
         Jack *j = &game->players[p];
         if (j->state != JACK_STATE_ALIVE) continue;
@@ -1765,40 +2001,49 @@ void Game_Update(Game *game) {
         }
     }
 
-    /* --- Win condition: 100% of the current level's grid is frozen --- */
-    int levelCols = (int)(game->currentWorldW / FROZEN_TILE_SIZE);
-    int levelRows = (int)(game->currentWorldH / FROZEN_TILE_SIZE);
+    /* --- Count freezable vs frozen, and win when all freezable tiles are frozen --- */
+    int totalFreezable = 0;
+    int frozenCount    = 0;
+    int firstUnfrozenR = -1;
+    int firstUnfrozenC = -1;
 
-    if (levelCols > FROZEN_COLS) levelCols = FROZEN_COLS;
-    if (levelRows > FROZEN_ROWS) levelRows = FROZEN_ROWS;
-
-    bool allFrozen = true;
-    for (int r = 0; r < levelRows && allFrozen; r++) {
-        for (int c = 0; c < levelCols; c++) {
-            if (!Frozen_IsCellFrozen(&game->frozen, c, r)) {
-                allFrozen = false;
-                break;
+    for (int r = 0; r < FROZEN_ROWS; r++) {
+        for (int c = 0; c < FROZEN_COLS; c++) {
+            if (!game->freezableMask[r][c]) continue;
+            totalFreezable++;
+            if (Frozen_IsCellFrozen(&game->frozen, c, r)) {
+                frozenCount++;
+            } else if (firstUnfrozenR < 0) {
+                firstUnfrozenR = r;
+                firstUnfrozenC = c;
             }
         }
     }
 
+    /* Debug: print once per second */
+    static float debugTimer = 0.0f;
+    debugTimer += dt;
+    if (debugTimer >= 1.0f) {
+        debugTimer = 0.0f;
+        TraceLog(LOG_INFO,
+                 "Freeze progress: %d / %d frozen  (first unfrozen: r=%d c=%d)",
+                 frozenCount, totalFreezable,
+                 firstUnfrozenR, firstUnfrozenC);
+    }
+
+    bool allFrozen = (totalFreezable > 0) &&
+                     (frozenCount == totalFreezable);
+
     if (allFrozen) {
-        if (!game->levelCompleted[game->currentLevel]) {
-            game->levelCompleted[game->currentLevel] = true;
-            SaveProgress(game);
-        }
-        game->levelCompleteTimer = 1.5f;
+        CompleteLevel(game);
         return;
     }
-    /* ----------------------------------------------------------------- */
 
     Particle_UpdateAll(&game->particles, GetFrameTime());
 
-    /* --- 5. Shards --- */
     Shard_UpdateAll(game->shards, game->currentWorldW);
     ResolveShardPlatformCollisions(game);
 
-    /* --- 6. Player arrays --- */
     Vector2   playerPositions[PLAYER_COUNT];
     Rectangle playerHitboxes [PLAYER_COUNT];
     for (int p = 0; p < PLAYER_COUNT; p++) {
@@ -1811,7 +2056,6 @@ void Game_Update(Game *game) {
         };
     }
 
-    /* --- 7. Enemies --- */
     Rectangle nullHitboxes[PLAYER_COUNT];
     for (int p = 0; p < PLAYER_COUNT; p++)
         nullHitboxes[p] = (Rectangle){ -10000, -10000, 0, 0 };
@@ -1823,10 +2067,8 @@ void Game_Update(Game *game) {
                               PLAYER_COUNT,
                               game->currentWorldW, game->currentWorldH);
 
-    /* --- 8. Player vs enemy / projectile --- */
     ApplyPlayerThreatCollisions(game, playerHitboxes);
 
-    /* --- 9. Jumppads — players --- */
     for (int p = 0; p < PLAYER_COUNT; p++) {
         Jack *j = &game->players[p];
         if (!Jack_IsPlayable(j)) continue;
@@ -1843,7 +2085,6 @@ void Game_Update(Game *game) {
         }
     }
 
-    /* --- 10. Jumppads — enemies --- */
     for (int e = 0; e < MAX_ENEMIES; e++) {
         Enemy *en = &game->enemies[e];
         if (!en->active)          continue;
@@ -1857,7 +2098,6 @@ void Game_Update(Game *game) {
         }
     }
 
-    /* --- 11. Spikes — players --- */
     for (int p = 0; p < PLAYER_COUNT; p++) {
         Jack *j = &game->players[p];
         if (!Jack_IsVulnerable(j)) continue;
@@ -1873,18 +2113,15 @@ void Game_Update(Game *game) {
         }
     }
 
-    /* --- 12. Game over --- */
     if (game->players[0].state == JACK_STATE_GONE &&
         game->players[1].state == JACK_STATE_GONE) {
         game->active = false;
         return;
     }
 
-    /* --- 13. Shard ↔ enemy / projectile --- */
     ResolveShardEnemyCollisions(game);
     ResolveShardProjectileCollisions(game);
 
-    /* --- 14. Shooting --- */
     if (IsKeyPressed(KEY_E) && Jack_IsPlayable(&game->players[0])) {
         Shard_Shoot(game->shards, game->players[0].position,
                     game->players[0].facingDir);
@@ -1896,15 +2133,30 @@ void Game_Update(Game *game) {
         Jack_TriggerShoot(&game->players[1]);
     }
 
-    /* --- 15. Survival timer --- */
+    /* --- Timer: 60s, lose a star every 20s, fail at 0 --- */
     game->levelTimer -= dt;
+
+    if (!game->starLost1 && game->levelTimer <= game->starMilestone1) {
+        game->starLost1 = true;
+        if (game->starsRemaining > 0) game->starsRemaining--;
+        game->starPopTimer = 0.6f;
+    }
+    if (!game->starLost2 && game->levelTimer <= game->starMilestone2) {
+        game->starLost2 = true;
+        if (game->starsRemaining > 0) game->starsRemaining--;
+        game->starPopTimer = 0.6f;
+    }
+
+    if (game->starPopTimer > 0.0f) {
+        game->starPopTimer -= dt;
+        if (game->starPopTimer < 0.0f) game->starPopTimer = 0.0f;
+    }
+
     if (game->levelTimer <= 0.0f) {
-        game->levelTimer = 0.0f;
-        if (!game->levelCompleted[game->currentLevel]) {
-            game->levelCompleted[game->currentLevel] = true;
-            SaveProgress(game);
-        }
-        game->levelCompleteTimer = 1.5f;
+        game->levelTimer     = 0.0f;
+        game->starsRemaining = 0;
+        game->active         = false;
+        return;
     }
 
     UpdateCameraForLevel(game, dt);

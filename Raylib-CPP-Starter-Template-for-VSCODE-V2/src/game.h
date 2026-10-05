@@ -22,6 +22,8 @@
 #define PLAYER_COUNT   2
 #define MAX_LEVELS     20
 #define MAX_TOTAL_LEVELS (MAX_LEVELS + MAX_CUSTOM_LEVELS)
+#define MAX_STARS 3
+
 
 typedef enum GameState {
     GAME_STATE_MENU = 0,
@@ -46,6 +48,13 @@ typedef struct Game {
     FrozenMap       frozen;
     ParticleSystem  particles;
 
+    int   starsRemaining;       // 3, 2, 1, 0 during play
+    float starMilestone1;       // time threshold for first loss (40.0f)
+    float starMilestone2;       // second (20.0f)
+    bool  starLost1;            // has the first star been consumed?
+    bool  starLost2;            // second?
+    float starPopTimer;
+
     int    score;
     bool   active;
     float  frameCounter;
@@ -67,6 +76,11 @@ typedef struct Game {
     /* Runtime world size (differs per level / custom level) */
     int      currentWorldW;
     int      currentWorldH;
+
+    unsigned char levelStars[MAX_TOTAL_LEVELS];
+    int           starsAwarded;
+    float         levelCompleteAnim;
+    unsigned char freezableMask[FROZEN_ROWS][FROZEN_COLS];
 
     /* Custom level editor */
     CustomLevel customLevels[MAX_CUSTOM_LEVELS];
