@@ -221,7 +221,7 @@ void Jack_Update(Jack *jack,
     if (jack->state == JACK_STATE_GONE) return;
 
     /* ============================================================
-     *  Ladder logic (alive only)
+     *  Ladder detection & entry
      * ============================================================ */
     bool jumpPressed = IsKeyPressed(controls->jump) ||
                        IsKeyPressed(controls->up);
@@ -229,15 +229,28 @@ void Jack_Update(Jack *jack,
     if (!jack->climbing) {
         int idx = FindOverlappingLadder(jack, ladders, 2.0f, 2.0f);
         if (idx >= 0) {
-            jack->ladderIndex = idx;
-            jack->onLadder    = true;
+            Rectangle lb    = ladders[idx].bounds;
+            float     feetY = Jack_Bottom(jack);
+
+            /* If the player's feet are right at the top edge of the
+             * ladder and they are NOT pressing down, don't grab it.
+             * This lets them stand on top without re-grabbing. */
+            bool atTop        = (feetY <= lb.y + 3.0f);
+            bool pressingDown = IsKeyDown(controls->down);
+
+            if (!atTop || pressingDown) {
+                jack->ladderIndex = idx;
+                jack->onLadder    = true;
+            } else {
+                jack->onLadder    = false;
+                jack->ladderIndex = -1;
+            }
         } else {
             jack->onLadder    = false;
             jack->ladderIndex = -1;
         }
     } else {
-        if (jack->ladderIndex < 0 ||
-            !ladders[jack->ladderIndex].active) {
+        if (jack->ladderIndex < 0 || !ladders[jack->ladderIndex].active) {
             jack->climbing    = false;
             jack->onLadder    = false;
             jack->ladderIndex = -1;
@@ -246,6 +259,7 @@ void Jack_Update(Jack *jack,
         }
     }
 
+    /* Enter climbing on up/down press when on a ladder */
     if (!jack->climbing && jack->onLadder) {
         if (IsKeyDown(controls->up) || IsKeyDown(controls->down)) {
             jack->climbing  = true;
@@ -254,6 +268,9 @@ void Jack_Update(Jack *jack,
         }
     }
 
+    /* ============================================================
+     *  Climbing state
+     * ============================================================ */
     if (jack->climbing && jack->ladderIndex >= 0) {
         const Ladder *L = &ladders[jack->ladderIndex];
         Rectangle lb = L->bounds;
@@ -272,6 +289,7 @@ void Jack_Update(Jack *jack,
             jack->velocityY   = -jack->jumpForce;
             jack->onGround    = false;
         } else {
+            /* Snap X to ladder centre */
             jack->position.x = lb.x + lb.width * 0.5f;
 
             float climb = 0.0f;
@@ -282,24 +300,70 @@ void Jack_Update(Jack *jack,
             jack->velocityY   = 0.0f;
             jack->onGround    = false;
 
-            float platformTopY = lb.y + 4.0f;
+            float feetY = Jack_Bottom(jack);
 
-            if (Jack_Bottom(jack) <= platformTopY + 2.0f) {
-                jack->position.y  = platformTopY - jack->radiusY;
-                jack->climbing    = false;
-                jack->onLadder    = false;
-                jack->ladderIndex = -1;
-                jack->onGround    = true;
-                jack->velocityY   = 0.0f;
-                return;
+            /* -------- Reached the TOP of the ladder (moving up) -------- */
+            if (climb < 0.0f && feetY <= lb.y + 2.0f) {
+                /* Try to continue onto a ladder directly above */
+                int nextIdx = -1;
+                for (int i = 0; i < MAX_LADDERS; i++) {
+                    if (i == jack->ladderIndex) continue;
+                    if (!ladders[i].active) continue;
+                    Rectangle nb = ladders[i].bounds;
+
+                    if (jack->position.x < nb.x - 6.0f) continue;
+                    if (jack->position.x > nb.x + nb.width + 6.0f) continue;
+                    if (nb.y >= lb.y - 1.0f) continue;
+
+                    float nbBottom = nb.y + nb.height;
+                    if (nbBottom < lb.y - 4.0f) continue;
+
+                    nextIdx = i;
+                    break;
+                }
+
+                if (nextIdx >= 0) {
+                    jack->ladderIndex = nextIdx;
+                } else {
+                    /* No continuation — this is the true top.
+                     * Snap player to stand on top and stop climbing. */
+                    jack->position.y  = lb.y - jack->radiusY;
+                    jack->climbing    = false;
+                    jack->onLadder    = false;
+                    jack->ladderIndex = -1;
+                    jack->onGround    = true;
+                    jack->velocityY   = 0.0f;
+                    return;
+                }
             }
 
+            /* -------- Reached the BOTTOM of the ladder (moving down) -------- */
             float bottom = lb.y + lb.height;
-            if (Jack_Bottom(jack) >= bottom) {
-                jack->position.y = bottom - jack->radiusY;
-                jack->onGround   = true;
+            if (climb > 0.0f && feetY >= bottom - 2.0f) {
+                int nextIdx = -1;
+                for (int i = 0; i < MAX_LADDERS; i++) {
+                    if (i == jack->ladderIndex) continue;
+                    if (!ladders[i].active) continue;
+                    Rectangle nb = ladders[i].bounds;
+
+                    if (jack->position.x < nb.x - 6.0f) continue;
+                    if (jack->position.x > nb.x + nb.width + 6.0f) continue;
+                    if (nb.y <= lb.y + lb.height + 1.0f) continue;
+                    if (nb.y > lb.y + lb.height + 4.0f) continue;
+
+                    nextIdx = i;
+                    break;
+                }
+
+                if (nextIdx >= 0) {
+                    jack->ladderIndex = nextIdx;
+                } else {
+                    jack->position.y = bottom - jack->radiusY;
+                    jack->onGround   = true;
+                }
             }
 
+            /* Animation timers */
             jack->animTimer += dt;
             if (jack->invulnTimer > 0.0f) {
                 jack->invulnTimer -= dt;
@@ -335,9 +399,7 @@ void Jack_Update(Jack *jack,
         moving = true;
     }
 
-    /* ------------------------------------------------------------
-     *  Horizontal platform collision — STATIC platforms
-     * ------------------------------------------------------------ */
+    /* Horizontal platform collision — static platforms */
     for (int i = 0; i < MAX_PLATFORMS; i++) {
         if (!platforms[i].active) continue;
         Rectangle p = platforms[i].bounds;
@@ -412,6 +474,30 @@ void Jack_Update(Jack *jack,
 
                 if (beforeBottomMove <= p.y + 1.0f && Jack_Bottom(jack) >= p.y) {
                     jack->position.y = p.y - jack->radiusY;
+                    jack->velocityY  = 0.0f;
+                    jack->onGround   = true;
+                    landed = true;
+                    break;
+                }
+            }
+        }
+
+        /* ---------- One-way landing — LADDER TOPS ----------
+         * The top edge of every active ladder is walkable. After
+         * `MergeStackedLadders` in game.c, stacked ladders are
+         * already a single object with a single top, so no chain
+         * detection is needed here. */
+        if (!landed) {
+            for (int i = 0; i < MAX_LADDERS; i++) {
+                if (!ladders[i].active) continue;
+                Rectangle lb = ladders[i].bounds;
+
+                if (jack->position.x < lb.x)             continue;
+                if (jack->position.x > lb.x + lb.width)  continue;
+
+                if (beforeBottomMove <= lb.y + 1.0f &&
+                    Jack_Bottom(jack) >= lb.y) {
+                    jack->position.y = lb.y - jack->radiusY;
                     jack->velocityY  = 0.0f;
                     jack->onGround   = true;
                     landed = true;

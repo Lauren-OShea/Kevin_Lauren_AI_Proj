@@ -53,6 +53,7 @@ typedef struct Enemy {
     float     dashTimer;
     float     dashActive;
     float     velocityY;
+    float     jumpCooldown;
     bool      airborne;
     bool      active;
 } Enemy;
@@ -70,6 +71,10 @@ bool Enemy_SpawnShooterOnPlatform   (Enemy enemies[MAX_ENEMIES], Rectangle platf
 bool Enemy_SpawnDasherOnPlatform    (Enemy enemies[MAX_ENEMIES], Rectangle platform);
 bool Enemy_SpawnUnstunnableOnPlatform(Enemy enemies[MAX_ENEMIES], Rectangle platform);
 bool Enemy_SpawnFlyer               (Enemy enemies[MAX_ENEMIES], Rectangle platform);
+
+bool Enemy_PlaceDirect(Enemy enemies[MAX_ENEMIES], Vector2 position,
+                       float baseY, float patrolLeft, float patrolRight,
+                       EnemyType type);
 
 bool Enemy_UpdateAll(Enemy enemies[MAX_ENEMIES],
                      Vector2 playerPositions[],
@@ -90,9 +95,5 @@ bool EnemyProjectile_UpdateAll(EnemyProjectile projectiles[MAX_ENEMY_PROJECTILES
                                int screenWidth, int screenHeight);
 
 void EnemyProjectile_DrawAll(const EnemyProjectile projectiles[MAX_ENEMY_PROJECTILES]);
-
-bool Enemy_PlaceDirect(Enemy enemies[MAX_ENEMIES], Vector2 position,
-                       float baseY, float patrolLeft, float patrolRight,
-                       EnemyType type);
 
 #endif /* JACKFROST_ENEMY_H */

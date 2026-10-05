@@ -35,10 +35,10 @@ typedef struct EditorMoving {
 } EditorMoving;
 
 typedef struct EditorEnemy {
-    Vector2 position;      /* foot position (bottom-center) */
+    Vector2 position;
     float   baseY;
     float   patrolLeft, patrolRight;
-    int     type;          /* EnemyType */
+    int     type;
 } EditorEnemy;
 
 typedef struct CustomLevel {
@@ -65,12 +65,11 @@ typedef struct CustomLevel {
     EditorEnemy enemies[EDITOR_MAX_ENEMIES];
 } CustomLevel;
 
-/* Editor runtime state (lives in Game) */
 typedef struct EditorState {
     bool       active;
-    int        slot;       /* 0..MAX_CUSTOM_LEVELS-1 */
+    int        slot;
     EditorTool tool;
-    int        enemyKind;  /* 0..4 */
+    int        enemyKind;
 
     Camera2D   cam;
 
@@ -81,6 +80,8 @@ typedef struct EditorState {
     bool       movingHasStart;
     Rectangle  movingStart;
 
+    bool       confirmReset;
+
     char       status[64];
     float      statusTimer;
 } EditorState;
@@ -90,10 +91,8 @@ void Editor_InitCustomLevel(CustomLevel *lvl);
 void Editor_SaveAll        (const CustomLevel levels[MAX_CUSTOM_LEVELS]);
 bool Editor_LoadAll        (      CustomLevel levels[MAX_CUSTOM_LEVELS]);
 
-/* Enter the editor on a given slot */
 void Editor_Enter(EditorState *e, int slot);
 
-/* Full update+draw: called by game.c while state == GAME_STATE_EDITOR */
 typedef struct Game Game;
 void Editor_Update(Game *game);
 void Editor_Draw  (const Game *game);

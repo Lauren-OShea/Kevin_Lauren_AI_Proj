@@ -18,6 +18,21 @@ void Editor_InitCustomLevel(CustomLevel *lvl) {
     strncpy(lvl->name, "Custom", sizeof(lvl->name) - 1);
 }
 
+/* Clear everything the player has placed. Because a level with no
+ * platforms is considered empty, also clear the `used` flag so the
+ * slot reverts to the "CREATE" state in the level select. */
+static void Editor_ClearLevelContent(CustomLevel *lvl) {
+    char nameCopy[24];
+    strncpy(nameCopy, lvl->name, sizeof(nameCopy) - 1);
+    nameCopy[sizeof(nameCopy) - 1] = '\0';
+
+    Editor_InitCustomLevel(lvl);
+
+    lvl->used = false;
+    strncpy(lvl->name, nameCopy, sizeof(lvl->name) - 1);
+    lvl->name[sizeof(lvl->name) - 1] = '\0';
+}
+
 void Editor_SaveAll(const CustomLevel levels[MAX_CUSTOM_LEVELS]) {
     if (!SaveFileData(CUSTOM_SAVE_FILE, (void*)levels,
                       sizeof(CustomLevel) * MAX_CUSTOM_LEVELS)) {
@@ -53,6 +68,7 @@ void Editor_Enter(EditorState *e, int slot) {
     e->enemyKind      = 0;
     e->dragging       = false;
     e->movingHasStart = false;
+    e->confirmReset   = false;
     e->status[0]      = '\0';
     e->statusTimer    = 0.0f;
 
@@ -93,23 +109,27 @@ static Rectangle MakeRect(Vector2 a, Vector2 b) {
     return (Rectangle){ x0, y0, x1 - x0, y1 - y0 };
 }
 
-/* Find the platform under the cursor that the enemy should stand on.
- * Returns the platform's TOP y in *outTop; returns NULL if none. */
+/* Find the platform under the cursor that the enemy should stand on. */
 static Rectangle *FindPlatformAt(CustomLevel *lvl, Vector2 world, float *outTop) {
     Rectangle *best = NULL;
-    float bestTop = -1e9f;
+    float bestDist = 1e9f;
 
     for (int i = 0; i < lvl->nPlatforms; i++) {
         Rectangle p = lvl->platforms[i];
         if (world.x < p.x || world.x > p.x + p.width) continue;
-        if (p.y > world.y + 60.0f) continue;   /* below cursor far away */
-        if (p.y > bestTop) { bestTop = p.y; best = &lvl->platforms[i]; }
+        if (p.y < world.y) continue;
+
+        float dist = p.y - world.y;
+        if (dist < bestDist) {
+            bestDist = dist;
+            best = &lvl->platforms[i];
+        }
     }
-    if (best) *outTop = bestTop;
+    if (best) *outTop = best->y;
     return best;
 }
 
-/* Find smallest-area element under the cursor (for delete). */
+/* Delete-target hit testing */
 typedef enum {
     DEL_NONE = 0,
     DEL_PLATFORM,
@@ -125,18 +145,6 @@ typedef struct {
     int      idx;
     float    area;
 } DelHit;
-
-static void ConsiderHit(DelHit *hit, DelKind kind, int idx, Rectangle r) {
-    if (CheckCollisionPointRec(GetMousePosition(), (Rectangle){0,0,0,0})) {
-        /* unused */
-    }
-    float area = r.width * r.height;
-    if (hit->kind == DEL_NONE || area < hit->area) {
-        hit->kind = kind;
-        hit->idx  = idx;
-        hit->area = area;
-    }
-}
 
 static DelHit FindDeleteTarget(const CustomLevel *lvl, Vector2 world) {
     DelHit hit = { DEL_NONE, -1, 1e18f };
@@ -224,13 +232,36 @@ static void DeleteAt(CustomLevel *lvl, int idx, DelKind kind) {
 }
 
 /* ============================================================
+ *  Confirmation dialog — shared layout between update & draw
+ * ============================================================ */
+
+static Rectangle ResetDialogPanel(void) {
+    return (Rectangle){
+        (SCREEN_WIDTH  - 460) / 2.0f,
+        (SCREEN_HEIGHT - 200) / 2.0f,
+        460.0f, 200.0f
+    };
+}
+
+static Rectangle ResetDialogConfirmBtn(void) {
+    Rectangle p = ResetDialogPanel();
+    return (Rectangle){ SCREEN_WIDTH / 2.0f - 150.0f,
+                        p.y + 140.0f, 130.0f, 32.0f };
+}
+
+static Rectangle ResetDialogCancelBtn(void) {
+    Rectangle p = ResetDialogPanel();
+    return (Rectangle){ SCREEN_WIDTH / 2.0f + 20.0f,
+                        p.y + 140.0f, 130.0f, 32.0f };
+}
+
+/* ============================================================
  *  Placement finalizers
  * ============================================================ */
 
 static void FinalizeDrag(EditorState *e, CustomLevel *lvl) {
     Rectangle r = MakeRect(e->dragStart, e->dragEnd);
 
-    /* Enforce minimums */
     if (e->tool == TOOL_PLATFORM) {
         if (r.width < EDITOR_GRID)     r.width = EDITOR_GRID;
         if (r.height < EDITOR_GRID)    r.height = EDITOR_GRID;
@@ -281,37 +312,34 @@ static void PlaceSingle(EditorState *e, CustomLevel *lvl, Vector2 world) {
                 SetStatus(e, "Enemy limit reached"); return;
             }
 
-            float platformTop = snapped.y;
-            Rectangle *onPlat = FindPlatformAt(lvl, world, &platformTop);
-
-            float patrolL, patrolR, footY, baseY;
-            if (onPlat) {
-                patrolL = onPlat->x + 12.0f;
-                patrolR = onPlat->x + onPlat->width - 12.0f;
-                if (patrolR - patrolL < 40.0f) {
-                    float c = (patrolL + patrolR) * 0.5f;
-                    patrolL = c - 20.0f;
-                    patrolR = c + 20.0f;
-                }
-                footY = onPlat->y;
-                baseY = onPlat->y;
-            } else {
-                patrolL = snapped.x - 50.0f;
-                patrolR = snapped.x + 50.0f;
-                footY   = snapped.y;
-                baseY   = snapped.y;
-            }
-
             EditorEnemy en;
-            en.type        = e->enemyKind;   /* 0..4 == EnemyType */
-            en.patrolLeft  = patrolL;
-            en.patrolRight = patrolR;
-            en.baseY       = baseY;
+            en.type = e->enemyKind;
 
             if (en.type == 3 /* flyer */) {
-                en.position = (Vector2){ snapped.x, baseY - ENEMY_FLY_SPAWN_UP };
+                en.position    = (Vector2){ snapped.x, snapped.y };
+                en.baseY       = snapped.y;
+                en.patrolLeft  = snapped.x - 40.0f;
+                en.patrolRight = snapped.x + 40.0f;
             } else {
-                en.position = (Vector2){ snapped.x, footY };
+                float platformTop = snapped.y;
+                Rectangle *onPlat = FindPlatformAt(lvl, world, &platformTop);
+
+                if (onPlat) {
+                    en.patrolLeft  = onPlat->x + 12.0f;
+                    en.patrolRight = onPlat->x + onPlat->width - 12.0f;
+                    if (en.patrolRight - en.patrolLeft < 40.0f) {
+                        float c = (en.patrolLeft + en.patrolRight) * 0.5f;
+                        en.patrolLeft  = c - 20.0f;
+                        en.patrolRight = c + 20.0f;
+                    }
+                    en.baseY    = onPlat->y;
+                    en.position = (Vector2){ snapped.x, onPlat->y };
+                } else {
+                    en.patrolLeft  = snapped.x - 50.0f;
+                    en.patrolRight = snapped.x + 50.0f;
+                    en.baseY       = snapped.y;
+                    en.position    = (Vector2){ snapped.x, snapped.y };
+                }
             }
 
             lvl->enemies[lvl->nEnemies++] = en;
@@ -339,7 +367,45 @@ void Editor_Update(Game *game) {
     EditorState *e   = &game->editor;
     CustomLevel *lvl = &game->customLevels[e->slot];
 
-    /* -------- Pan (middle mouse drag or WASD) -------- */
+    /* ============================================================
+     *  Confirmation dialog — takes absolute priority.
+     * ============================================================ */
+    if (e->confirmReset) {
+        Vector2 mouse = GetMousePosition();
+        bool    click = IsMouseButtonPressed(MOUSE_BUTTON_LEFT);
+
+        bool hoverConfirm = CheckCollisionPointRec(mouse,
+                                                   ResetDialogConfirmBtn());
+        bool hoverCancel  = CheckCollisionPointRec(mouse,
+                                                   ResetDialogCancelBtn());
+
+        bool confirm = IsKeyPressed(KEY_Y) || IsKeyPressed(KEY_ENTER) ||
+                       (hoverConfirm && click);
+        bool cancel  = IsKeyPressed(KEY_N) || IsKeyPressed(KEY_ESCAPE) ||
+                       (hoverCancel  && click);
+
+        if (confirm) {
+            Editor_ClearLevelContent(lvl);
+            e->dragging       = false;
+            e->movingHasStart = false;
+            e->confirmReset   = false;
+            SetStatus(e, "Level reset");
+        } else if (cancel) {
+            e->confirmReset = false;
+            SetStatus(e, "Reset cancelled");
+        }
+        return;
+    }
+
+    /* ============================================================
+     *  Reset key — open the confirmation dialog
+     * ============================================================ */
+    if (IsKeyPressed(KEY_DELETE)) {
+        e->confirmReset = true;
+        return;
+    }
+
+    /* -------- Pan -------- */
     if (IsMouseButtonDown(MOUSE_BUTTON_MIDDLE)) {
         Vector2 d = GetMouseDelta();
         e->cam.target.x -= d.x / e->cam.zoom;
@@ -350,7 +416,7 @@ void Editor_Update(Game *game) {
     if (IsKeyDown(KEY_W) || IsKeyDown(KEY_UP))    e->cam.target.y -= 6.0f / e->cam.zoom;
     if (IsKeyDown(KEY_S) || IsKeyDown(KEY_DOWN))  e->cam.target.y += 6.0f / e->cam.zoom;
 
-    /* -------- Zoom (wheel, snapped to 0.25) -------- */
+    /* -------- Zoom -------- */
     float wheel = GetMouseWheelMove();
     if (wheel != 0.0f) {
         e->cam.zoom += wheel * 0.25f;
@@ -359,7 +425,6 @@ void Editor_Update(Game *game) {
         e->cam.zoom = roundf(e->cam.zoom * 4.0f) / 4.0f;
     }
 
-    /* Clamp camera target to world with a soft margin */
     float viewW = SCREEN_WIDTH  / e->cam.zoom;
     float viewH = SCREEN_HEIGHT / e->cam.zoom;
     if (viewW >= EDITOR_WORLD_W) e->cam.target.x = EDITOR_WORLD_W * 0.5f;
@@ -371,7 +436,7 @@ void Editor_Update(Game *game) {
                                  fminf(EDITOR_WORLD_H - viewH * 0.5f,
                                        e->cam.target.y));
 
-    /* -------- Tool selection (1-8) -------- */
+    /* -------- Tool selection -------- */
     if (IsKeyPressed(KEY_ONE))   e->tool = TOOL_PLATFORM;
     if (IsKeyPressed(KEY_TWO))   e->tool = TOOL_LADDER;
     if (IsKeyPressed(KEY_THREE)) e->tool = TOOL_SPIKE;
@@ -384,7 +449,6 @@ void Editor_Update(Game *game) {
     if (IsKeyPressed(KEY_Q)) e->enemyKind = (e->enemyKind + 4) % 5;
     if (IsKeyPressed(KEY_R)) e->enemyKind = (e->enemyKind + 1) % 5;
 
-    /* -------- Status timer -------- */
     if (e->statusTimer > 0.0f) {
         e->statusTimer -= GetFrameTime();
         if (e->statusTimer <= 0.0f) e->status[0] = '\0';
@@ -392,7 +456,7 @@ void Editor_Update(Game *game) {
 
     /* -------- Exit / Playtest -------- */
     if (IsKeyPressed(KEY_ESCAPE)) {
-        lvl->used = true;
+        lvl->used = (lvl->nPlatforms > 0);
         snprintf(lvl->name, sizeof(lvl->name), "Custom %d", e->slot + 1);
         Editor_SaveAll(game->customLevels);
         game->state = GAME_STATE_LEVEL_SELECT;
@@ -400,7 +464,7 @@ void Editor_Update(Game *game) {
         return;
     }
     if (IsKeyPressed(KEY_ENTER)) {
-        lvl->used = true;
+        lvl->used = (lvl->nPlatforms > 0);
         snprintf(lvl->name, sizeof(lvl->name), "Custom %d", e->slot + 1);
         Editor_SaveAll(game->customLevels);
 
@@ -417,7 +481,6 @@ void Editor_Update(Game *game) {
 
     /* -------- Right-click delete -------- */
     if (IsMouseButtonPressed(MOUSE_BUTTON_RIGHT)) {
-        /* Cancel any in-progress moving-platform placement first */
         if (e->tool == TOOL_MOVING && e->movingHasStart) {
             e->movingHasStart = false;
             SetStatus(e, "Moving placement cancelled");
@@ -511,7 +574,6 @@ static void DrawWorldBounds(void) {
 }
 
 static void DrawPlacedElements(const CustomLevel *lvl) {
-    /* Platforms */
     if (lvl->nPlatforms > 0) {
         Platform temp[MAX_PLATFORMS];
         Platform_InitAll(temp);
@@ -520,7 +582,6 @@ static void DrawPlacedElements(const CustomLevel *lvl) {
         Platform_DrawAll(temp, NULL);
     }
 
-    /* Ladders */
     if (lvl->nLadders > 0) {
         Ladder temp[MAX_LADDERS];
         Ladder_InitAll(temp);
@@ -529,7 +590,6 @@ static void DrawPlacedElements(const CustomLevel *lvl) {
         Ladder_DrawAll(temp, NULL);
     }
 
-    /* Spikes */
     if (lvl->nSpikes > 0) {
         Spike temp[MAX_SPIKES];
         Spike_InitAll(temp);
@@ -538,7 +598,6 @@ static void DrawPlacedElements(const CustomLevel *lvl) {
         Spike_DrawAll(temp);
     }
 
-    /* Jumppads */
     if (lvl->nJumppads > 0) {
         JumpPad temp[MAX_JUMPPADS];
         JumpPad_InitAll(temp);
@@ -548,7 +607,6 @@ static void DrawPlacedElements(const CustomLevel *lvl) {
         JumpPad_DrawAll(temp);
     }
 
-    /* Moving platforms — draw both start and end rects plus a link line */
     for (int i = 0; i < lvl->nMoving; i++) {
         Rectangle a = lvl->moving[i].startRect;
         Rectangle b = lvl->moving[i].endRect;
@@ -564,7 +622,6 @@ static void DrawPlacedElements(const CustomLevel *lvl) {
         DrawRectangleLinesEx(b, 2.0f, (Color){ 180, 220, 255, 200 });
     }
 
-    /* Enemies */
     if (lvl->nEnemies > 0) {
         Enemy temp[MAX_ENEMIES];
         Enemy_InitAll(temp);
@@ -577,7 +634,6 @@ static void DrawPlacedElements(const CustomLevel *lvl) {
         Enemy_DrawAll(temp);
     }
 
-    /* Spawns */
     DrawCircle((int)lvl->spawn1.x, (int)lvl->spawn1.y, 14,
                (Color){ 120, 200, 255, 200 });
     DrawCircleLines((int)lvl->spawn1.x, (int)lvl->spawn1.y, 14,
@@ -673,15 +729,10 @@ static void DrawEditorTopBar(const EditorState *e) {
     DrawText(line, 12, 10, 18, (Color){ 232, 245, 255, 255 });
 
     const char *hint =
-        "LMB place   RMB delete   WASD/MMB pan   Wheel zoom   ENTER play   ESC exit";
+        "LMB place  RMB delete  WASD/MMB pan  Wheel zoom  DEL reset  ENTER play  ESC exit";
     DrawText(hint,
-             SCREEN_WIDTH - MeasureText(hint, 14) - 12,
-             SCREEN_HEIGHT - 22, 14, (Color){ 200, 220, 240, 220 });
-
-    const char *limit =
-        TextFormat("Plat:%d/%d  Ldr:%d/%d  Spk:%d/%d  Pad:%d/%d  Mov:%d/%d  Enm:%d/%d",
-                   0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
-    (void)limit;   /* real values drawn below */
+             SCREEN_WIDTH - MeasureText(hint, 13) - 12,
+             SCREEN_HEIGHT - 22, 13, (Color){ 200, 220, 240, 220 });
 }
 
 static void DrawEditorCounts(const EditorState *e, const CustomLevel *lvl) {
@@ -695,6 +746,64 @@ static void DrawEditorCounts(const EditorState *e, const CustomLevel *lvl) {
         lvl->nEnemies,   EDITOR_MAX_ENEMIES);
     DrawText(line, 12, 40, 14, (Color){ 200, 220, 240, 220 });
     (void)e;
+}
+
+/* ============================================================
+ *  Confirmation dialog drawing
+ * ============================================================ */
+
+static void DrawResetConfirmDialog(void) {
+    DrawRectangle(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT,
+                  (Color){ 0, 0, 0, 180 });
+
+    Rectangle panel   = ResetDialogPanel();
+    Rectangle btnYes  = ResetDialogConfirmBtn();
+    Rectangle btnNo   = ResetDialogCancelBtn();
+
+    DrawRectangleRec(panel, (Color){ 30, 50, 80, 245 });
+    DrawRectangleLinesEx(panel, 3.0f, (Color){ 220, 240, 255, 255 });
+
+    const char *title = "RESET LEVEL?";
+    DrawText(title,
+             SCREEN_WIDTH / 2 - MeasureText(title, 32) / 2,
+             (int)panel.y + 25, 32,
+             (Color){ 255, 200, 200, 255 });
+
+    const char *line1 = "This will delete everything";
+    const char *line2 = "you've placed in this level.";
+    DrawText(line1,
+             SCREEN_WIDTH / 2 - MeasureText(line1, 18) / 2,
+             (int)panel.y + 75, 18, (Color){ 220, 230, 240, 255 });
+    DrawText(line2,
+             SCREEN_WIDTH / 2 - MeasureText(line2, 18) / 2,
+             (int)panel.y + 98, 18, (Color){ 220, 230, 240, 255 });
+
+    Vector2 mouse = GetMousePosition();
+    bool hoverYes = CheckCollisionPointRec(mouse, btnYes);
+    bool hoverNo  = CheckCollisionPointRec(mouse, btnNo);
+
+    DrawRectangleRec(btnYes,
+                     hoverYes ? (Color){ 220,  80,  80, 255 }
+                              : (Color){ 140,  45,  45, 230 });
+    DrawRectangleLinesEx(btnYes, 2.0f, (Color){ 255, 230, 230, 255 });
+
+    DrawRectangleRec(btnNo,
+                     hoverNo ? (Color){  90, 150, 210, 255 }
+                             : (Color){  40,  80, 130, 230 });
+    DrawRectangleLinesEx(btnNo, 2.0f, (Color){ 200, 225, 255, 255 });
+
+    const char *yesText = "[Y] Confirm";
+    const char *noText  = "[N] Cancel";
+
+    DrawText(yesText,
+             (int)(btnYes.x + btnYes.width / 2) - MeasureText(yesText, 18) / 2,
+             (int)(btnYes.y + (btnYes.height - 18) / 2),
+             18, WHITE);
+
+    DrawText(noText,
+             (int)(btnNo.x + btnNo.width / 2) - MeasureText(noText, 18) / 2,
+             (int)(btnNo.y + (btnNo.height - 18) / 2),
+             18, WHITE);
 }
 
 void Editor_Draw(const Game *game) {
@@ -712,7 +821,6 @@ void Editor_Draw(const Game *game) {
 
     EndMode2D();
 
-    /* Screen-space UI */
     DrawEditorTopBar(e);
     DrawEditorCounts(e, lvl);
 
@@ -720,5 +828,9 @@ void Editor_Draw(const Game *game) {
         DrawText(e->status,
                  SCREEN_WIDTH / 2 - MeasureText(e->status, 22) / 2,
                  56, 22, (Color){ 240, 250, 255, 255 });
+    }
+
+    if (e->confirmReset) {
+        DrawResetConfirmDialog();
     }
 }

@@ -3,6 +3,12 @@
 #include <string.h>
 #include <stdio.h>
 
+/* ============================================================
+ *  Global Y offset
+ * ============================================================ */
+
+#define LEVEL_Y_SHIFT 12
+
 /* Forward declarations for static helpers defined later */
 static void BuildLadders(Game *game);
 static bool LadderBlockedByPlatform(const Game *game,
@@ -1281,17 +1287,25 @@ static Rectangle LevelButtonRect(int i) {
     };
 }
 
+/* A custom level is only playable if it contains at least one platform. */
+static bool CustomLevel_HasContent(const CustomLevel *c) {
+    return c->nPlatforms > 0;
+}
+
 static bool LevelUnlocked(const Game *game, int idx) {
     if (idx < MAX_LEVELS) {
         if (idx == 0) return true;
         return game->levelCompleted[idx - 1];
     }
-    return game->customLevels[idx - MAX_LEVELS].used;
+    int slot = idx - MAX_LEVELS;
+    if (slot < 0) slot = 0;
+    if (slot >= MAX_CUSTOM_LEVELS) slot = MAX_CUSTOM_LEVELS - 1;
+    return CustomLevel_HasContent(&game->customLevels[slot]);
 }
 
 static int FirstEmptyCustomSlot(const Game *game) {
     for (int i = 0; i < MAX_CUSTOM_LEVELS; i++)
-        if (!game->customLevels[i].used) return i;
+        if (!CustomLevel_HasContent(&game->customLevels[i])) return i;
     return 0;
 }
 
@@ -1348,7 +1362,7 @@ static void UpdateLevelSelect(Game *game) {
 
     if (idx >= MAX_LEVELS) {
         int slot = idx - MAX_LEVELS;
-        if (!game->customLevels[slot].used) {
+        if (!CustomLevel_HasContent(&game->customLevels[slot])) {
             Editor_Enter(&game->editor, slot);
             game->state = GAME_STATE_EDITOR;
             return;
@@ -1369,17 +1383,17 @@ static void DrawLevelSelect(const Game *game) {
              35, 42, (Color){ 232, 245, 255, 255 });
 
     for (int i = 0; i < MAX_TOTAL_LEVELS; i++) {
-        Rectangle r        = LevelButtonRect(i);
-        bool      isCustom = (i >= MAX_LEVELS);
-        bool      used     = isCustom
-                             ? game->customLevels[i - MAX_LEVELS].used
+        Rectangle r          = LevelButtonRect(i);
+        bool      isCustom   = (i >= MAX_LEVELS);
+        bool      hasContent = isCustom
+                             ? CustomLevel_HasContent(&game->customLevels[i - MAX_LEVELS])
                              : true;
-        bool      unlocked = LevelUnlocked(game, i);
-        bool      done     = game->levelCompleted[i];
-        bool      selected = (game->levelSelectSelection == i);
+        bool      unlocked   = LevelUnlocked(game, i);
+        bool      done       = game->levelCompleted[i];
+        bool      selected   = (game->levelSelectSelection == i);
 
         Color fill, border, text;
-        if (isCustom && !used) {
+        if (isCustom && !hasContent) {
             fill   = (Color){  20,  30,  40, 200 };
             border = (Color){  90, 130, 170, 220 };
             text   = (Color){ 150, 190, 220, 255 };
@@ -1437,7 +1451,7 @@ static void DrawLevelSelect(const Game *game) {
 
         const char *name;
         int  ns = 11;
-        if (isCustom && !used) {
+        if (isCustom && !hasContent) {
             name = "CREATE";
         } else if (isCustom) {
             name = game->customLevels[i - MAX_LEVELS].name;
@@ -1632,6 +1646,93 @@ static void BuildLadders(Game *game) {
     }
 }
 
+/* After all ladders are added, merge any that are stacked end-to-end
+ * into a single logical ladder. This makes chains of ladders behave
+ * as one continuous ladder with a single standable top. */
+static void MergeStackedLadders(Ladder ladders[MAX_LADDERS]) {
+    bool changed = true;
+    while (changed) {
+        changed = false;
+        for (int i = 0; i < MAX_LADDERS; i++) {
+            if (!ladders[i].active) continue;
+
+            for (int j = i + 1; j < MAX_LADDERS; j++) {
+                if (!ladders[j].active) continue;
+
+                Rectangle a = ladders[i].bounds;
+                Rectangle b = ladders[j].bounds;
+
+                /* X overlap with a small tolerance for staggered ladders */
+                if (a.x > b.x + b.width + 6.0f) continue;
+                if (b.x > a.x + a.width + 6.0f) continue;
+
+                float aBottom = a.y + a.height;
+                float bBottom = b.y + b.height;
+
+                /* b directly below a (gap <= 4 px) → extend a downward */
+                if (fabsf(aBottom - b.y) <= 4.0f) {
+                    ladders[i].bounds.height = bBottom - a.y;
+                    ladders[j].active        = false;
+                    changed                  = true;
+                }
+                /* b directly above a (gap <= 4 px) → extend a upward */
+                else if (fabsf(bBottom - a.y) <= 4.0f) {
+                    ladders[i].bounds.y      = b.y;
+                    ladders[i].bounds.height = aBottom - b.y;
+                    ladders[j].active        = false;
+                    changed                  = true;
+                }
+            }
+        }
+    }
+}
+
+/* ============================================================
+ *  Global Y offset
+ *
+ *  Applied once, right after a level finishes loading, to
+ *  nudge every world element down by a fixed amount. Keeps
+ *  everything aligned with each other while letting the
+ *  visuals sit a few pixels lower than the raw level data.
+ * ============================================================ */
+
+static void ApplyLevelYShift(Game *game) {
+    for (int i = 0; i < MAX_PLATFORMS; i++)
+        if (game->platforms[i].active)
+            game->platforms[i].bounds.y += LEVEL_Y_SHIFT;
+
+    for (int i = 0; i < MAX_LADDERS; i++)
+        if (game->ladders[i].active)
+            game->ladders[i].bounds.y += LEVEL_Y_SHIFT;
+
+    for (int i = 0; i < MAX_MOVING_PLATFORMS; i++) {
+        if (!game->movingPlatforms[i].active) continue;
+        game->movingPlatforms[i].bounds.y   += LEVEL_Y_SHIFT;
+        game->movingPlatforms[i].startPos.y += LEVEL_Y_SHIFT;
+        game->movingPlatforms[i].endPos.y   += LEVEL_Y_SHIFT;
+        game->movingPlatforms[i].prevPos.y  += LEVEL_Y_SHIFT;
+    }
+
+    for (int i = 0; i < MAX_JUMPPADS; i++)
+        if (game->jumppads[i].active)
+            game->jumppads[i].bounds.y += LEVEL_Y_SHIFT;
+
+    for (int i = 0; i < MAX_SPIKES; i++)
+        if (game->spikes[i].active)
+            game->spikes[i].bounds.y += LEVEL_Y_SHIFT;
+
+    for (int i = 0; i < MAX_ENEMIES; i++) {
+        if (!game->enemies[i].active) continue;
+        game->enemies[i].position.y += LEVEL_Y_SHIFT;
+        game->enemies[i].baseY      += LEVEL_Y_SHIFT;
+    }
+
+    for (int i = 0; i < PLAYER_COUNT; i++) {
+        game->players[i].position.y      += LEVEL_Y_SHIFT;
+        game->players[i].spawnPosition.y += LEVEL_Y_SHIFT;
+    }
+}
+
 static void SpawnEnemiesForLevel(Game *game, const LevelDef *L) {
     for (int e = 0; e < L->nEnemies && e < MAX_ENEMIES; e++) {
         int idx = L->enemies[e].platformIdx;
@@ -1706,6 +1807,7 @@ void Game_LoadLevel(Game *game, int idx) {
         for (int i = 0; i < L->nPlatforms && i < MAX_PLATFORMS; i++)
             Platform_Add(game->platforms, L->platforms[i]);
         BuildLadders(game);
+        MergeStackedLadders(game->ladders);
 
         Jack_Init(&game->players[0], L->spawn1, WHITE);
         Jack_Init(&game->players[1], L->spawn2,
@@ -1734,6 +1836,7 @@ void Game_LoadLevel(Game *game, int idx) {
 
         for (int i = 0; i < C->nLadders && i < MAX_LADDERS; i++)
             Ladder_Add(game->ladders, C->ladders[i]);
+        MergeStackedLadders(game->ladders);
 
         for (int i = 0; i < C->nSpikes && i < MAX_SPIKES; i++)
             Spike_Add(game->spikes, C->spikes[i]);
@@ -1763,12 +1866,17 @@ void Game_LoadLevel(Game *game, int idx) {
         game->currentWorldH = EDITOR_WORLD_H;
     }
 
-    game->active              = true;
-    game->state               = GAME_STATE_PLAYING;
-    game->frameCounter        = 0.0f;
-    game->levelCompleteTimer  = 0.0f;
+
+    ApplyLevelYShift(game);
+
+    game->active             = true;
+    game->state              = GAME_STATE_PLAYING;
+    game->frameCounter       = 0.0f;
+    game->levelCompleteTimer = 0.0f;
+    game->levelTimer         = 5.0f;
     game->levelCompleteAnim   = 0.0f;
     game->starsAwarded        = 0;
+
 
     game->levelTimer     = 60.0f;
     game->starsRemaining = MAX_STARS;
@@ -1934,8 +2042,18 @@ void Game_Update(Game *game) {
 
         if (game->levelCompleteTimer <= 0.0f) {
             game->levelCompleteTimer = 0.0f;
+
             int next = game->currentLevel + 1;
-            if (next >= MAX_TOTAL_LEVELS) {
+
+            /* Do not auto-advance into an empty custom level. */
+            bool validNext = (next < MAX_TOTAL_LEVELS);
+            if (validNext && next >= MAX_LEVELS) {
+                int slot = next - MAX_LEVELS;
+                if (!CustomLevel_HasContent(&game->customLevels[slot]))
+                    validNext = false;
+            }
+
+            if (!validNext) {
                 game->state         = GAME_STATE_MENU;
                 game->menuSelection = 0;
                 return;
@@ -1984,6 +2102,7 @@ void Game_Update(Game *game) {
                 game->movingPlatforms, &P2_CONTROLS,
                 game->currentWorldW, game->currentWorldH);
 
+    /* --- 4. Freeze / particles --- */
     float radiusPx = FROZEN_RADIUS_TILES * FROZEN_TILE_SIZE;
 
     for (int p = 0; p < PLAYER_COUNT; p++) {
@@ -1993,13 +2112,14 @@ void Game_Update(Game *game) {
         Vector2 feet = { j->position.x, j->position.y + j->radiusY };
         Frozen_FreezeCircle(&game->frozen, feet, radiusPx);
 
-        bool moving = IsKeyDown(
-            p == 0 ? KEY_A : KEY_LEFT) || IsKeyDown(p == 0 ? KEY_D : KEY_RIGHT);
+        bool moving = IsKeyDown(p == 0 ? KEY_A : KEY_LEFT) ||
+                      IsKeyDown(p == 0 ? KEY_D : KEY_RIGHT);
 
         if (moving || j->climbing) {
             Particle_SpawnIcy(&game->particles, feet, 30.0f);
         }
     }
+
 
     /* --- Count freezable vs frozen, and win when all freezable tiles are frozen --- */
     int totalFreezable = 0;
@@ -2040,6 +2160,7 @@ void Game_Update(Game *game) {
     }
 
     Particle_UpdateAll(&game->particles, GetFrameTime());
+
 
     Shard_UpdateAll(game->shards, game->currentWorldW);
     ResolveShardPlatformCollisions(game);
@@ -2087,9 +2208,10 @@ void Game_Update(Game *game) {
 
     for (int e = 0; e < MAX_ENEMIES; e++) {
         Enemy *en = &game->enemies[e];
-        if (!en->active)          continue;
-        if (en->airborne)         continue;
-        if (en->stunTimer > 0.0f) continue;
+        if (!en->active)             continue;
+        if (en->airborne)            continue;
+        if (en->stunTimer > 0.0f)    continue;
+        if (en->jumpCooldown > 0.0f) continue;
 
         Rectangle er = Enemy_GetRect(en);
         if (JumpPad_TryTrigger(game->jumppads, er)) {
